@@ -28,7 +28,7 @@ Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs ever
 
 Use pnpm only, never npm or Yarn; the dependency rules are in [AGENTS.md](AGENTS.md#dependency-mechanisms).
 
-**BayanDocs cloud sessions:** to have the browsers ready in every session, add this line to the cloud environment's setup script on the line just above its final `exit 0` (a line after that would never run). It does nothing when bayan-web is not attached to the session, never makes the session fail, and logs to `/var/log/bayandocs-setup/bayan-web.log`:
+**BayanDocs cloud sessions:** the cloud environment's setup script ([docs/scripts/cloud-environment-setup.sh](https://github.com/BayanDocs/docs/blob/main/scripts/cloud-environment-setup.sh), from version 2026-10-04.2) runs this script for you with the line below, just above its final `exit 0`, so the browsers are ready in every session. If your environment still runs an older version of that script, paste this line there yourself, above the final `exit 0` (a line after it would never run). It does nothing when bayan-web is not attached to the session, never makes the session fail, and logs to `/var/log/bayandocs-setup/bayan-web.log`:
 
 ```sh
 if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/scripts/dev-setup.sh >/var/log/bayandocs-setup/bayan-web.log 2>&1 || echo "bayan-web dev-setup failed; see /var/log/bayandocs-setup/bayan-web.log"; fi
