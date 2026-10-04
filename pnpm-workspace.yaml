@@ -1,0 +1,25 @@
+# pnpm settings for bayan-web. These enforce the dependency policy in ADR-0017; change them only together with that ADR and AGENTS.md.
+
+# Never resolve or install a version published less than 24 hours (1440 minutes) ago. Strict mode fails the install instead of falling back to an older version, and frozen installs re-check the versions already in pnpm-lock.yaml.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
+# Dependency build and install scripts never run. pnpm skips them by default; strictDepBuilds turns a dependency that wants to run one into an install error (ERR_PNPM_IGNORED_BUILDS), so nobody can add such a package by accident. allowBuilds is the allowlist of packages that may run scripts: keep it empty unless a pull request justifies an entry.
+# Do NOT add `ignoreScripts: true` here: it makes pnpm skip the scripts silently, which hides them from strictDepBuilds and lets such a package be added without anyone noticing. (`ignore-scripts=true` in .npmrc is only for npm; pnpm 12 does not read it.)
+strictDepBuilds: true
+allowBuilds: {}
+
+# Fail when a version has weaker publishing provenance than earlier releases of the same package (a sign of a hijacked account).
+trustPolicy: no-downgrade
+
+# Every sub-dependency must come from the npm registry: no Git, tarball-URL or local-path sources.
+blockExoticSubdeps: true
+
+# Save exact versions ("1.2.3", never "^1.2.3") when adding packages.
+saveExact: true
+
+# Use exactly the Node.js and pnpm versions pinned in package.json.
+engineStrict: true
+
+# Before `pnpm run`, check that node_modules matches pnpm-lock.yaml, and stop if it does not.
+verifyDepsBeforeRun: error
