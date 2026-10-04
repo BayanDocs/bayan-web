@@ -19,7 +19,7 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 
 ## Rules specific to bayan-web
 
-- **Licensing (ADR-0003):** GPL-3.0-or-later. The app shows a "Source code" link to the exact source of the running version, configurable by operators of modified versions (OPS-08); keep it working.
+- **Licensing (ADR-0003):** GPL-3.0-or-later with the BayanDocs App Store Permission (`GPL-3.0-or-later WITH LicenseRef-BayanDocs-App-Store-Permission`). The app shows a "Source code" link to the exact source of the running version, configurable by operators of modified versions (OPS-08); keep it working. `REUSE.toml` records which license applies to which files and `LICENSES/` holds the full texts; keep `reuse lint` passing, and add a new license text only with `reuse download <SPDX-ID>`.
 - **Thin shell (ADR-0014):** no document logic here. If something would have to be implemented twice (desktop and web), it belongs in bayan-core.
 - **Engine in a Web Worker:** the main thread never calls the engine directly; it exchanges protocol messages (`docs/specs/engine-protocol.md`) with the worker and composites transferred tiles.
 - **Stack:** React, TypeScript in strict mode, Vite, React Aria Components for interactive controls, Biome for lint and format, Vitest and Playwright for tests.
@@ -34,3 +34,5 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 ## Dependency mechanisms
 
 pnpm enforces the 24-hour minimum age natively, including on frozen installs of the existing lockfile; a lockfile-integrity script and `pnpm audit` run in CI (X-003). Upgrades happen only in the monthly dependency session.
+
+In BayanDocs cloud sessions the tools are preinstalled at pinned versions by `docs/scripts/cloud-environment-setup.sh`; run `bayandocs-tools` to list them. If a tool is missing, install the version pinned there (never a newer one) and mention it in the pull request.
