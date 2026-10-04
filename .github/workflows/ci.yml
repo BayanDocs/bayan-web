@@ -1,0 +1,44 @@
+# Continuous integration for bayan-web: the full verification gate (`pnpm verify`) on every pull request, on pushes to main and nightly
+# (the nightly run re-checks the audit against newly published advisories, ADR-0017 §7).
+# Workflow conventions (ADR-0017, X-002): no permissions by default, actions pinned to full commit SHAs with the version in a comment,
+# no persisted credentials, timeouts and a concurrency group on every job, and every tool installed at a pinned, checksum-verified version.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: pnpm verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      COREPACK_DEFAULT_TO_LATEST: "0"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-17)
+        with:
+          persist-credentials: false
+
+      # Installs Node.js and the Playwright browsers checked against SHA-256 hashes, pnpm through Corepack checked against the
+      # SHA-512 in package.json, the browsers' Ubuntu libraries from a frozen archive snapshot, and then runs
+      # `pnpm install --frozen-lockfile`, which fails if pnpm-lock.yaml does not match package.json or a package wants to run a script.
+      - name: Install pinned tools and dependencies
+        run: scripts/dev-setup.sh
+
+      - name: Verify
+        run: pnpm verify
