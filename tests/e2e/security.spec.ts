@@ -1,17 +1,20 @@
 import { expect, type Page, test } from "@playwright/test";
 import { productionHeaders } from "../../config/security-headers.ts";
 
-/** Every same-origin resource the built page loads: the page itself and each script, stylesheet and icon it references. */
+/**
+ * Every same-origin resource of the build: the page itself, each script, stylesheet and icon it references, and the licence
+ * notices the title bar links to.
+ */
 async function builtResources(html: string): Promise<string[]> {
   const urls = [...html.matchAll(/\s(?:src|href)="(\/[^"]*)"/g)].map((match) => match[1] ?? "");
-  return ["/", ...new Set(urls)];
+  return ["/", "/third-party-licenses.txt", ...new Set(urls)];
 }
 
 test("the preview server sends every security header on every resource", async ({ request }) => {
   const page = await request.get("/");
   expect(page.ok()).toBe(true);
   const resources = await builtResources(await page.text());
-  expect(resources.length).toBeGreaterThanOrEqual(4); // the page, its script, its stylesheet and its icon
+  expect(resources.length).toBeGreaterThanOrEqual(5); // the page, the licence notices, its script, its stylesheet and its icon
 
   for (const path of resources) {
     const response = await request.get(path);

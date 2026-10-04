@@ -39,6 +39,15 @@ test("the app works when the browser blocks site storage", async ({ page }) => {
   expect(await problems()).toEqual([]);
 });
 
+test("the title bar links to the third-party licence notices", async ({ page }) => {
+  await page.goto("/");
+  const link = page.getByRole("banner").getByRole("link", { name: "Licenses" });
+  await expect(link).toHaveAttribute("href", "/third-party-licenses.txt");
+  await link.click();
+  await expect(page).toHaveURL(/\/third-party-licenses\.txt$/);
+  await expect(page.locator("body")).toContainText("The app bundles dependencies which contain the following licenses");
+});
+
 test("the page is cross-origin isolated", async ({ page }) => {
   await page.goto("/");
   expect(await page.evaluate(() => window.crossOriginIsolated)).toBe(true);

@@ -28,7 +28,13 @@ export function App() {
     <div className="app-frame">
       <header className="title-bar">
         <span className="title-bar__name">BayanDocs</span>
-        <ThemeSwitch theme={theme} onChange={changeTheme} />
+        <div className="title-bar__actions">
+          {/* The licence notices of the bundled third-party packages, written by the build (vite.config.ts, build.license). */}
+          <a className="title-bar__link" href="/third-party-licenses.txt">
+            Licenses
+          </a>
+          <ThemeSwitch theme={theme} onChange={changeTheme} />
+        </div>
       </header>
       <section className="ribbon" aria-label="Ribbon" data-testid="ribbon">
         <p className="placeholder">Ribbon</p>
