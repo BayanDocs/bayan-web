@@ -1,5 +1,5 @@
 // The HTTP security headers every bayan-web server sends (ADR-0014 §9, requirement SEC-10).
-// The Vite dev and preview servers use these objects directly; deploy/nginx.conf repeats them for production, and a unit test keeps the two in sync.
+// The Vite dev and preview servers use these objects directly; deploy/nginx/security-headers.conf repeats them for production, and a unit test keeps the two in sync.
 
 /** Content Security Policy directives, in the order they are written to the header. */
 export const cspDirectives: ReadonlyArray<readonly [string, ...string[]]> = [
