@@ -6,7 +6,38 @@ This repository is a deliberately **thin shell**. The engine, [bayan-core](https
 
 Built with TypeScript, React and Vite; packages managed with pnpm under a strict supply-chain policy.
 
-> **Status: Phase 0 (Foundations).** No code yet. The first work package is [WEB-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-001-web-scaffold.md).
+> **Status: Phase 0 (Foundations).** The application skeleton, security hardening and verification gate are in place ([WEB-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-001-web-scaffold.md)); the engine worker, page canvas and input bridge come next ([WEB-002](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-002-spike-worker-canvas.md)).
+
+## Getting started
+
+Run `scripts/dev-setup.sh` once. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm (through Corepack), the project's packages, and the browser builds the tests use. Automatic installs of Node.js and the browsers cover Linux on x86-64 (Ubuntu 24.04 for the browsers); on other systems install Node.js 24.21.0 yourself (for example with nvm or fnm, which read `.nvmrc`) and the script tells you how to get the browsers.
+
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Development server at http://localhost:5173 with the same security headers as production (except `Integrity-Policy`). |
+| `pnpm build` | Production build in `dist/`, then Subresource Integrity hashes and a size report. |
+| `pnpm preview` | Serves `dist/` at http://localhost:4173 with the production security headers. |
+| `pnpm verify` | The full verification gate: policy check, lint, type check, unit tests, build, end-to-end tests in Chromium, Firefox and WebKit, and `pnpm audit`. Run it before every push. |
+| `pnpm format` | Formats the code with Biome. |
+
+Use pnpm only, never npm or Yarn; the dependency rules are in [AGENTS.md](AGENTS.md#dependency-mechanisms).
+
+**BayanDocs cloud sessions:** to have the browsers ready in every session, add this line to the cloud environment's setup script on the line just above its final `exit 0` (a line after that would never run). It does nothing when bayan-web is not attached to the session, never makes the session fail, and logs to `/var/log/bayandocs-setup/bayan-web.log`:
+
+```sh
+if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/scripts/dev-setup.sh >/var/log/bayandocs-setup/bayan-web.log 2>&1 || echo "bayan-web dev-setup failed; see /var/log/bayandocs-setup/bayan-web.log"; fi
+```
+
+## Repository map
+
+| Path | Contents |
+|---|---|
+| `src/` | The React application: the frame with its ribbon and canvas regions, themes and controls. |
+| `config/security-headers.ts` | The HTTP security headers (Content Security Policy, Trusted Types, cross-origin isolation, `Integrity-Policy`), used by the dev and preview servers. |
+| `deploy/nginx/` | A sample production configuration that sends the same headers; a unit test keeps it in sync. |
+| `scripts/` | `dev-setup.sh` (tool installation), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes) and `size-report.ts` (bundle size budget). |
+| `tests/unit/`, `tests/e2e/` | Vitest unit tests and Playwright end-to-end tests. |
+| `pnpm-workspace.yaml`, `.npmrc` | Package-manager settings that enforce the supply-chain policy (ADR-0017). |
 
 ## Where things are decided
 
