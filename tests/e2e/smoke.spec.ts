@@ -13,6 +13,32 @@ test("the application frame loads with no CSP violations or errors", async ({ pa
   expect(await problems()).toEqual([]);
 });
 
+// Regression test: merely reading window.localStorage throws a SecurityError when the user blocks sites from saving data,
+// and the app used to render a blank page.
+test("the app works when the browser blocks site storage", async ({ page }) => {
+  const problems = await collectProblems(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+  });
+  await page.goto("/");
+
+  await expect(page.getByRole("region", { name: "Ribbon" })).toBeVisible();
+  await expect(page.getByRole("main", { name: "Document" })).toBeVisible();
+  const darkTheme = page.getByRole("switch", { name: "Dark theme" });
+  await expect(darkTheme).toBeVisible();
+  // The switch still works; the choice just is not remembered.
+  const before = await page.locator("html").getAttribute("data-theme");
+  await page.getByText("Dark theme").click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-theme", before ?? "");
+
+  expect(await problems()).toEqual([]);
+});
+
 test("the page is cross-origin isolated", async ({ page }) => {
   await page.goto("/");
   expect(await page.evaluate(() => window.crossOriginIsolated)).toBe(true);

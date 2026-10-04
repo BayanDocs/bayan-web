@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { safeLocalStorage } from "./storage.ts";
 import { ThemeSwitch } from "./ThemeSwitch.tsx";
 import { applyTheme, readStoredTheme, resolveTheme, storeTheme, type Theme } from "./theme.ts";
 
 function initialTheme(): Theme {
   const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return resolveTheme(readStoredTheme(window.localStorage), systemPrefersDark);
+  return resolveTheme(readStoredTheme(safeLocalStorage()), systemPrefersDark);
 }
 
 /**
@@ -20,7 +21,7 @@ export function App() {
 
   const changeTheme = (next: Theme) => {
     setTheme(next);
-    storeTheme(window.localStorage, next);
+    storeTheme(safeLocalStorage(), next);
   };
 
   return (
