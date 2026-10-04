@@ -19,6 +19,7 @@ The plan, decisions (ADRs), specifications and work packages live in the [BayanD
 
 ## Rules specific to bayan-web
 
+- **Licensing (ADR-0003):** GPL-3.0-or-later. The app shows a "Source code" link to the exact source of the running version, configurable by operators of modified versions (OPS-08); keep it working.
 - **Thin shell (ADR-0014):** no document logic here. If something would have to be implemented twice (desktop and web), it belongs in bayan-core.
 - **Engine in a Web Worker:** the main thread never calls the engine directly; it exchanges protocol messages (`docs/specs/engine-protocol.md`) with the worker and composites transferred tiles.
 - **Stack:** React, TypeScript in strict mode, Vite, React Aria Components for interactive controls, Biome for lint and format, Vitest and Playwright for tests.
