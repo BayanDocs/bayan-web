@@ -41,9 +41,13 @@ if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/s
 | `src/` | The React application: the frame with its ribbon and canvas regions, themes and controls. |
 | `config/security-headers.ts` | The HTTP security headers (Content Security Policy, Trusted Types, cross-origin isolation, `Integrity-Policy`), used by the dev and preview servers. |
 | `deploy/nginx/` | A sample production configuration that sends the same headers; a unit test keeps it in sync. |
-| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes) and `size-report.ts` (bundle size budget). |
+| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes), `check-licenses.ts` (third-party licence notices) and `size-report.ts` (bundle size budget). |
 | `tests/unit/`, `tests/e2e/` | Vitest unit tests and Playwright end-to-end tests. |
 | `pnpm-workspace.yaml`, `.npmrc` | Package-manager settings that enforce the supply-chain policy (ADR-0017). |
+
+## Deploying
+
+Serve the `dist/` folder that `pnpm build` produces, with the security headers from `config/security-headers.ts`; `deploy/nginx/` is a sample nginx configuration. Keep `third-party-licenses.txt` published next to `index.html`: the app's "Licenses" link points to it, and the licences of the bundled packages (MIT and Apache-2.0) require their notices whenever the code is redistributed, which every page load does. Treat it like the "Source code" link that OPS-08 requires: operators of modified versions must keep both working.
 
 ## Where things are decided
 
