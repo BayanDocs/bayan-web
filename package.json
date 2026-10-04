@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "BayanDocs in the browser: a thin React shell around the bayan-core engine.",
-  "license": "GPL-3.0-or-later WITH LicenseRef-BayanDocs-App-Store-Permission",
+  "license": "GPL-3.0-or-later WITH AdditionRef-BayanDocs-App-Store-Permission",
   "repository": "github:BayanDocs/bayan-web",
   "type": "module",
   "packageManager": "pnpm@12.9.0+sha512.8f64efa0b792986ca98ae568791bcd7722807e274c4f0c1d9853c62116495c584119db98762a2a5343b1684d361b9ae26fdd16d551666d7635346d3fae830ddd",
