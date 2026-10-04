@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sets up everything needed to build and test bayan-web, at pinned versions with verified checksums (ADR-0017):
 #   1. Node.js (the version in .nvmrc). Uses an existing installation of exactly that version; otherwise downloads it and checks its SHA-256.
-#   2. pnpm (the version in package.json "packageManager"), through Corepack, which checks the SHA-512 written there.
+#   2. pnpm (the version in package.json "packageManager"): its native binary for this machine, checked against the sha512 that
+#      pnpm-lock.yaml records for it. Corepack is not used (Node.js 25 and later no longer ship it, and it checks only pnpm's wrapper).
 #   3. The project's packages, with `pnpm install --frozen-lockfile` (pnpm checks every package against pnpm-lock.yaml).
 #   4. The three browser engines Playwright tests in (Chromium's headless shell, Firefox, WebKit). Playwright says which builds this
 #      machine needs; each archive is checked against the SHA-256 pinned below, and an archive without a pin is refused.
@@ -82,7 +83,6 @@ TOOLS_DIR="${BAYANDOCS_TOOLS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/bayandocs
 PATH_ADDED="" # directories this script put on PATH, for the hint printed at the end
 TMP_ROOT="$(mktemp -d)" # downloads go here; removed however the script ends
 trap 'rm -rf "$TMP_ROOT"' EXIT
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_DEFAULT_TO_LATEST=0
 
 log() { printf '[dev-setup] %s\n' "$*"; }
 die() {
@@ -104,11 +104,15 @@ sha256_of() {
   fi
 }
 
-# Downloads a URL over HTTPS only (redirects included) and checks the file against an expected SHA-256 before anything uses it.
+# Downloads a URL over HTTPS only, redirects included.
+download() {
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 2 -o "$2" "$1" || die "could not download $1"
+}
+
+# Downloads a URL and checks the file against an expected SHA-256 before anything uses it.
 fetch_verified() {
   local url="$1" expected="$2" dest="$3" actual
-  curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 2 -o "$dest" "$url" ||
-    die "could not download $url"
+  download "$url" "$dest"
   actual="$(sha256_of "$dest")"
   if [ "$actual" != "$expected" ]; then
     rm -f "$dest"
@@ -182,27 +186,36 @@ setup_node() {
   log "Node.js $NODE_VERSION: installed in $dir"
 }
 
+# Installs pnpm's native binary for this machine, pinned by pnpm-lock.yaml: package.json "packageManager" names the version, and the
+# lockfile's first YAML document records the sha512 of the @pnpm/exe.<target> tarball that contains the binary.
 setup_pnpm() {
-  local want
-  want="$(sed -n 's/.*"packageManager": "pnpm@\([0-9.]*\)+sha512\..*/\1/p' "$REPO_ROOT/package.json")"
-  [ -n "$want" ] || die 'package.json "packageManager" must pin pnpm with a sha512 hash'
+  local target plan version url integrity dir
+  target="$(host_target)"
+  [ -n "$target" ] || die "no pinned pnpm build for this machine; README.md lists the supported platforms"
   cd "$REPO_ROOT"
-  if [ "$(pnpm --version 2>/dev/null || true)" != "$want" ]; then
-    # Missing, or some other pnpm comes first on PATH: put Corepack's shim first. Corepack ships with Node.js 24; its pnpm shim
-    # reads "packageManager" and verifies the download against the hash written there.
-    local shim_dir
-    shim_dir="$(dirname "$(command -v node)")"
-    if [ ! -w "$shim_dir" ]; then
-      shim_dir="$TOOLS_DIR/bin"
-      mkdir -p "$shim_dir"
-    fi
-    corepack enable pnpm --install-directory "$shim_dir"
-    prepend_path "$shim_dir"
-    hash -r
+  plan="$(node scripts/pnpm-binary.ts plan "$target")" || die "could not read pnpm's pins from package.json and pnpm-lock.yaml"
+  read -r version url integrity <<EOF
+$plan
+EOF
+  dir="$TOOLS_DIR/pnpm-$version"
+  if [ ! -x "$dir/pnpm" ] || [ "$(cat "$dir/.lockfile-integrity" 2>/dev/null || true)" != "$integrity" ]; then
+    log "pnpm $version: downloading the $target binary and checking it against pnpm-lock.yaml"
+    download "$url" "$TMP_ROOT/pnpm.tgz"
+    node scripts/pnpm-binary.ts verify "$TMP_ROOT/pnpm.tgz" "$integrity" ||
+      die "the pnpm download does not match the sha512 in pnpm-lock.yaml; refusing to use it"
+    mkdir -p "$TMP_ROOT/pnpm"
+    tar -xzf "$TMP_ROOT/pnpm.tgz" -C "$TMP_ROOT/pnpm" package/pnpm
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    mv "$TMP_ROOT/pnpm/package/pnpm" "$dir/pnpm"
+    chmod 755 "$dir/pnpm"
+    printf '%s\n' "$integrity" >"$dir/.lockfile-integrity"
   fi
-  corepack install # downloads the pinned pnpm once and checks its SHA-512; a no-op when it is cached
-  [ "$(pnpm --version)" = "$want" ] || die "pnpm $(pnpm --version) is running instead of the pinned $want"
-  log "pnpm $want: ready (through Corepack)"
+  prepend_path "$dir"
+  hash -r
+  [ "$(command -v pnpm)" = "$dir/pnpm" ] || die "pnpm resolves to $(command -v pnpm), not the verified $dir/pnpm"
+  [ "$(pnpm --version)" = "$version" ] || die "the verified pnpm reports version $(pnpm --version), not $version"
+  log "pnpm $version: ready in $dir (checked against pnpm-lock.yaml)"
 }
 
 install_packages() {
