@@ -12,7 +12,7 @@ Built with TypeScript, React and Vite; packages managed with pnpm under a strict
 
 **Supported development platforms:** Ubuntu 24.04 on x86-64, and macOS 14 or later on Apple Silicon or Intel. CI checks every change on Ubuntu 24.04, on macOS 15 with Apple Silicon and on macOS 26 with Intel.
 
-Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm, the project's packages, and the browser builds the tests use. Playwright tells the script which browser builds your machine needs, and the script refuses any build it has no pinned hash for. When the script puts Node.js or pnpm in its own folder (`~/.local/share/bayandocs`), it prints the `export PATH=…` line to add to your shell profile.
+Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm (its native binary, checked against the sha512 that `pnpm-lock.yaml` records for it; no Corepack needed), the project's packages, and the browser builds the tests use. Playwright tells the script which browser builds your machine needs, and the script refuses any build it has no pinned hash for. When the script puts Node.js or pnpm in its own folder (`~/.local/share/bayandocs`), it prints the `export PATH=…` line to add to your shell profile.
 
 - **Ubuntu 24.04:** the script also installs the browsers' system libraries from a frozen, signed Ubuntu archive snapshot, which needs `sudo`.
 - **macOS:** open Terminal in the repository and run `scripts/dev-setup.sh`. Nothing needs installing first: the script works with what macOS includes (bash 3.2, curl, unzip, tar and shasum). The browsers go to `~/Library/Caches/ms-playwright`, where Playwright looks for them.
@@ -41,7 +41,7 @@ if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/s
 | `src/` | The React application: the frame with its ribbon and canvas regions, themes and controls. |
 | `config/security-headers.ts` | The HTTP security headers (Content Security Policy, Trusted Types, cross-origin isolation, `Integrity-Policy`), used by the dev and preview servers. |
 | `deploy/nginx/` | A sample production configuration that sends the same headers; a unit test keeps it in sync. |
-| `scripts/` | `dev-setup.sh` (tool installation), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes) and `size-report.ts` (bundle size budget). |
+| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes) and `size-report.ts` (bundle size budget). |
 | `tests/unit/`, `tests/e2e/` | Vitest unit tests and Playwright end-to-end tests. |
 | `pnpm-workspace.yaml`, `.npmrc` | Package-manager settings that enforce the supply-chain policy (ADR-0017). |
 
