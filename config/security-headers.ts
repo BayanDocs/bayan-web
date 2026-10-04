@@ -19,8 +19,11 @@ export const cspDirectives: ReadonlyArray<readonly [string, ...string[]]> = [
   ["form-action", "'none'"],
   ["frame-src", "'none'"],
   ["frame-ancestors", "'none'"],
-  // Trusted Types: string-to-code sinks such as innerHTML only accept typed values, and no policy may create them ('none').
-  // A later work package that truly needs a policy must name it here and justify it.
+  // Trusted Types: string-to-code sinks such as innerHTML and script URLs accept only typed values, and 'none' means no policy
+  // may exist to create them. As a result, new Worker(), trustedTypes.createPolicy() and navigator.serviceWorker.register() all
+  // throw a TypeError in Chromium, Firefox and WebKit. Nothing in WEB-001 needs a policy, so 'none' stays for now.
+  // WEB-002's amended AC-5 (BayanDocs/docs: workpackages/phase-0/WEB-002-spike-worker-canvas.md) permits exactly one named
+  // policy, bayan-script-url, to start the engine worker; any other policy needs an approved work package.
   ["require-trusted-types-for", "'script'"],
   ["trusted-types", "'none'"],
 ];
