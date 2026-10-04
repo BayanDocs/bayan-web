@@ -64,8 +64,20 @@ describe("security headers", () => {
   });
 });
 
+/**
+ * True when an nginx configuration declares a types block without including mime.types.
+ * A types block replaces nginx's whole inherited MIME map, so every other file would be served as application/octet-stream.
+ */
+function replacesMimeMap(conf: string): boolean {
+  const lines = conf.split("\n").filter((line) => !/^\s*#/.test(line));
+  const declaresTypes = lines.some((line) => /^\s*types\s*\{/.test(line));
+  const includesMimeTypes = lines.some((line) => /^\s*include\s+\S*mime\.types\s*;/.test(line));
+  return declaresTypes && !includesMimeTypes;
+}
+
 describe("sample nginx configuration", () => {
   const conf = readFileSync(new URL("../../deploy/nginx/security-headers.conf", import.meta.url), "utf8");
+  const site = readFileSync(new URL("../../deploy/nginx/bayan-web.conf", import.meta.url), "utf8");
   const nginxHeaders = Object.fromEntries(
     [...conf.matchAll(/^add_header\s+(\S+)\s+"([^"]*)"\s+always;$/gm)].map((m) => [m[1], m[2]]),
   );
@@ -75,12 +87,25 @@ describe("sample nginx configuration", () => {
   });
 
   it("includes the headers in every location block that adds its own", () => {
-    const site = readFileSync(new URL("../../deploy/nginx/bayan-web.conf", import.meta.url), "utf8");
     for (const block of site.split(/\n\s*location\s/).slice(1)) {
       if (block.includes("add_header")) {
         expect(block).toContain("include /etc/nginx/bayan-web/security-headers.conf;");
       }
     }
+  });
+
+  // Regression test: a server-level `types { application/wasm wasm; }` block made a stock nginx serve every file,
+  // including index.html, as application/octet-stream, so browsers downloaded the page instead of showing it.
+  it("keeps nginx's MIME map (no types block without include mime.types)", () => {
+    expect(replacesMimeMap(site)).toBe(false);
+  });
+
+  it("detects a types block that would replace the MIME map", () => {
+    expect(replacesMimeMap("server {\n    types {\n        application/wasm wasm;\n    }\n}\n")).toBe(true);
+    expect(
+      replacesMimeMap("server {\n    types {\n        include mime.types;\n        application/wasm wasm;\n    }\n}\n"),
+    ).toBe(false);
+    expect(replacesMimeMap("server {\n    # types { application/wasm wasm; }\n}\n")).toBe(false);
   });
 });
 
