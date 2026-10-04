@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkPolicy, type PolicyInput } from "../../scripts/check-policy.ts";
+import { checkAllowBuilds, checkPolicy, type PolicyInput } from "../../scripts/check-policy.ts";
 
 const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 
@@ -64,5 +64,49 @@ describe("dependency policy check", () => {
     input.lockfileExists = false;
     input.npmrc = "";
     expect(checkPolicy(input)).toHaveLength(4);
+  });
+});
+
+describe("allowBuilds check", () => {
+  const yaml = (allowBuilds: string) => `strictDepBuilds: true\n${allowBuilds}\ntrustPolicy: no-downgrade\n`;
+
+  it('accepts "allowBuilds: {}"', () => {
+    expect(checkAllowBuilds(yaml("allowBuilds: {}"))).toEqual([]);
+  });
+
+  it('accepts explicit denials such as "fsevents: false"', () => {
+    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false"))).toEqual([]);
+    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false\n  '@scope/pkg': false\n  # a comment"))).toEqual([]);
+  });
+
+  it("rejects a true entry, even one hidden after a comment or blank line", () => {
+    expect(checkAllowBuilds(yaml("allowBuilds:\n  esbuild: true"))).toEqual([expect.stringContaining("must not let")]);
+    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false\n# note\n\n  esbuild: true"))).toEqual([
+      expect.stringContaining("must not let"),
+    ]);
+  });
+
+  it("rejects flow-style maps", () => {
+    expect(checkAllowBuilds(yaml("allowBuilds: { fsevents: false }"))).toHaveLength(1);
+    expect(checkAllowBuilds(yaml("allowBuilds: {esbuild: true}"))).toHaveLength(1);
+  });
+
+  it("fails closed on anything it cannot read with certainty", () => {
+    for (const block of [
+      "allowBuilds:\n  fsevents: no",
+      "allowBuilds:\n  fsevents: false # macOS",
+      "allowBuilds:\n    fsevents: false",
+      "allowBuilds:\n\tfsevents: false",
+      "allowBuilds: {}\n  esbuild: false",
+      "allowBuilds:",
+      "allowBuilds: null",
+    ]) {
+      expect(checkAllowBuilds(yaml(block)), block).not.toEqual([]);
+    }
+  });
+
+  it("requires allowBuilds exactly once", () => {
+    expect(checkAllowBuilds("strictDepBuilds: true\n")).toHaveLength(1);
+    expect(checkAllowBuilds(yaml("allowBuilds: {}\n'allowBuilds':\n  esbuild: true"))).toHaveLength(1);
   });
 });

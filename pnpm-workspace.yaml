@@ -4,10 +4,13 @@
 minimumReleaseAge: 1440
 minimumReleaseAgeStrict: true
 
-# Dependency build and install scripts never run. pnpm skips them by default; strictDepBuilds turns a dependency that wants to run one into an install error (ERR_PNPM_IGNORED_BUILDS), so nobody can add such a package by accident. allowBuilds is the allowlist of packages that may run scripts: keep it empty unless a pull request justifies an entry.
+# Dependency build and install scripts never run. pnpm skips them by default; strictDepBuilds turns a dependency that wants to run one into an install error (ERR_PNPM_IGNORED_BUILDS), so nobody can add such a package by accident.
+# allowBuilds names packages whose scripts pnpm should not ask about: `false` denies the script explicitly (the install succeeds and the script never runs), `true` would let it run. No package may be set to true without an approved, justified pull request, and scripts/check-policy.ts fails on any true entry. Nothing is allowed to run scripts.
+# fsevents is a macOS-only optional dependency of Vite whose package declares an install script (node-gyp rebuild); it already ships a prebuilt binary, so denying the rebuild costs nothing, and without this entry every install on a Mac would fail.
 # Do NOT add `ignoreScripts: true` here: it makes pnpm skip the scripts silently, which hides them from strictDepBuilds and lets such a package be added without anyone noticing. (`ignore-scripts=true` in .npmrc is only for npm; pnpm 12 does not read it.)
 strictDepBuilds: true
-allowBuilds: {}
+allowBuilds:
+  fsevents: false
 
 # Fail when a version has weaker publishing provenance than earlier releases of the same package (a sign of a hijacked account).
 trustPolicy: no-downgrade

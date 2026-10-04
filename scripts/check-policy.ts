@@ -13,7 +13,6 @@ export const requiredWorkspaceSettings: readonly string[] = [
   "minimumReleaseAge: 1440",
   "minimumReleaseAgeStrict: true",
   "strictDepBuilds: true",
-  "allowBuilds: {}",
   "trustPolicy: no-downgrade",
   "blockExoticSubdeps: true",
   "saveExact: true",
@@ -27,6 +26,55 @@ export const forbiddenWorkspaceSettings: ReadonlyArray<readonly [RegExp, string]
   [/^minimumReleaseAgeExclude\s*:/m, "minimumReleaseAgeExclude bypasses the 24-hour minimum age"],
   [/^dangerouslyAllowAllBuilds\s*:/m, "dangerouslyAllowAllBuilds lets every dependency run install scripts"],
 ];
+
+/** One entry of an allowBuilds block that denies a package's scripts: the package name (quoted when scoped), then exactly `false`. */
+const allowBuildsDenial =
+  /^ {2}(?:[a-z0-9][a-z0-9._-]*|'@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*'|"@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*"): false$/;
+
+/**
+ * Checks allowBuilds, pnpm's per-package list of whether install and build scripts may run (true) or are denied (false).
+ * Accepted: `allowBuilds: {}`, or an `allowBuilds:` block whose entries are all exactly `<package>: false`.
+ * Everything else fails: any true entry, a flow-style map such as `allowBuilds: { a: false }`, and anything this small reader
+ * cannot interpret with certainty. It fails closed rather than guess.
+ */
+export function checkAllowBuilds(workspaceYaml: string): string[] {
+  const lines = workspaceYaml.split(/\r?\n/);
+  const starts = lines.flatMap((line, index) => (/^["']?allowBuilds["']?\s*:/.test(line) ? [index] : []));
+  if (starts.length !== 1) {
+    return [`pnpm-workspace.yaml must set allowBuilds exactly once at the top level (found ${starts.length}).`];
+  }
+  const start = starts[0] ?? 0;
+  const head = (lines[start] ?? "").trimEnd();
+  if (head !== "allowBuilds: {}" && head !== "allowBuilds:") {
+    return [
+      `allowBuilds must be written as "allowBuilds: {}" or as a block of "<package>: false" entries, not ${JSON.stringify(head)}.`,
+    ];
+  }
+
+  // Read the lines that YAML would treat as part of this setting: everything up to the next top-level key.
+  // Comment lines and blank lines do not end a YAML block, so they are skipped rather than treated as the end.
+  const problems: string[] = [];
+  let denials = 0;
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === "" || /^\s*#/.test(line)) continue;
+    if (!/^\s/.test(line)) break;
+    if (head === "allowBuilds: {}") {
+      problems.push(`"allowBuilds: {}" cannot be followed by entries: ${JSON.stringify(line.trim())}.`);
+    } else if (allowBuildsDenial.test(line)) {
+      denials += 1;
+    } else if (/:\s*true\b/.test(line)) {
+      problems.push(`allowBuilds must not let any package run scripts: ${JSON.stringify(line.trim())}.`);
+    } else {
+      problems.push(
+        `allowBuilds entries must be exactly "<package>: false"; cannot accept ${JSON.stringify(line.trim())}.`,
+      );
+    }
+  }
+  if (head === "allowBuilds:" && denials === 0 && problems.length === 0) {
+    problems.push('allowBuilds has no entries; write "allowBuilds: {}" instead.');
+  }
+  return problems;
+}
 
 export const requiredNpmrcLines: readonly string[] = ["ignore-scripts=true", "save-exact=true", "engine-strict=true"];
 
@@ -94,6 +142,7 @@ export function checkPolicy(input: PolicyInput): string[] {
       problems.push(`pnpm-workspace.yaml must contain the line "${setting}".`);
     }
   }
+  problems.push(...checkAllowBuilds(input.workspaceYaml));
   for (const [pattern, reason] of forbiddenWorkspaceSettings) {
     if (pattern.test(input.workspaceYaml)) {
       problems.push(`pnpm-workspace.yaml: ${reason}.`);
