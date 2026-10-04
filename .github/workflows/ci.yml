@@ -20,9 +20,16 @@ concurrency:
 
 jobs:
   verify:
-    name: pnpm verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    name: pnpm verify (${{ matrix.runner }})
+    strategy:
+      # Every platform runs to the end, so a failure on one never hides a failure on another.
+      fail-fast: false
+      matrix:
+        # The supported development platforms (README.md), on pinned image labels only, never a moving "-latest" label:
+        # Ubuntu 24.04 on x86-64, macOS 15 on Apple Silicon (macos-15 is arm64) and macOS 26 on Intel (macos-26-intel is x64).
+        runner: [ubuntu-24.04, macos-15, macos-26-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
@@ -35,10 +42,11 @@ jobs:
           persist-credentials: false
 
       # Installs Node.js and the Playwright browsers checked against SHA-256 hashes, pnpm through Corepack checked against the
-      # SHA-512 in package.json, the browsers' Ubuntu libraries from a frozen archive snapshot, and then runs
+      # SHA-512 in package.json, on Ubuntu the browsers' libraries from a frozen archive snapshot, and then runs
       # `pnpm install --frozen-lockfile`, which fails if pnpm-lock.yaml does not match package.json or a package wants to run a script.
+      # /bin/bash on purpose: on macOS it is Apple's bash 3.2, the shell a stock Mac runs the script with.
       - name: Install pinned tools and dependencies
-        run: scripts/dev-setup.sh
+        run: /bin/bash scripts/dev-setup.sh
 
       - name: Verify
         run: pnpm verify
