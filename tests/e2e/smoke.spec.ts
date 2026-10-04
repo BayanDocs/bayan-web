@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import { collectProblems } from "./collect-problems.ts";
 
 test("the application frame loads with no CSP violations or errors", async ({ page }) => {
@@ -74,14 +74,29 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
-test("the dark-theme switch works from the keyboard and is remembered", async ({ page }) => {
+/**
+ * Moves keyboard focus forward from wherever it is (the top of a freshly loaded page) until `target` has it, the way a keyboard
+ * user would. WebKit, like Safari on macOS, skips links and form controls on plain Tab unless Full Keyboard Access is turned on,
+ * so it needs Alt+Tab (Option+Tab); Chromium and Firefox use Tab.
+ */
+async function tabTo(page: Page, browserName: string, target: Locator, maxPresses = 5): Promise<void> {
+  const key = browserName === "webkit" ? "Alt+Tab" : "Tab";
+  for (let presses = 0; presses < maxPresses; presses += 1) {
+    await page.keyboard.press(key);
+    if (await target.evaluate((element) => element === document.activeElement)) return;
+  }
+  throw new Error(`${maxPresses} presses of ${key} never reached the target`);
+}
+
+test("the dark-theme switch works from the keyboard and is remembered", async ({ page, browserName }) => {
   await openWithSystemScheme(page, "light");
   const darkTheme = page.getByRole("switch", { name: "Dark theme" });
   const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   const lightBackground = await background();
 
-  await darkTheme.focus();
+  await tabTo(page, browserName, darkTheme);
+  await expect(darkTheme).toBeFocused();
   await page.keyboard.press("Space");
   await expect(darkTheme).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
