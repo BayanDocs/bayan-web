@@ -47,6 +47,7 @@ describe("dependency policy check", () => {
       "ignoreScripts: true",
       "minimumReleaseAgeExclude:\n  - foo",
       "dangerouslyAllowAllBuilds: true",
+      "trustPolicyExclude:\n  - foo@1.0.0",
     ]) {
       const input = repositoryInput();
       input.workspaceYaml += `\n${line}\n`;

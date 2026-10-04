@@ -25,6 +25,7 @@ export const forbiddenWorkspaceSettings: ReadonlyArray<readonly [RegExp, string]
   [/^ignoreScripts\s*:/m, "ignoreScripts hides dependency build scripts from strictDepBuilds; leave it out"],
   [/^minimumReleaseAgeExclude\s*:/m, "minimumReleaseAgeExclude bypasses the 24-hour minimum age"],
   [/^dangerouslyAllowAllBuilds\s*:/m, "dangerouslyAllowAllBuilds lets every dependency run install scripts"],
+  [/^trustPolicyExclude\s*:/m, "trustPolicyExclude exempts packages from trustPolicy: no-downgrade"],
 ];
 
 /** One entry of an allowBuilds block that denies a package's scripts: the package name (quoted when scoped), then exactly `false`. */
