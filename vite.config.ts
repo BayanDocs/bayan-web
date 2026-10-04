@@ -23,5 +23,9 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     // Keep asset files separate (never inlined as data: URLs) so each gets its own integrity hash.
     assetsInlineLimit: 0,
+    // Licence notices: MIT, Apache-2.0 and similar licences require them whenever the code is redistributed, and every page load
+    // redistributes the bundle. Vite writes the name, version, SPDX identifier and full licence text of every npm package in the
+    // bundle to this file; scripts/check-licenses.ts then checks it (the app links to it from the title bar).
+    license: { fileName: "third-party-licenses.txt" },
   },
 });
