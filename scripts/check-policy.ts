@@ -98,6 +98,11 @@ export interface PolicyInput {
   lockfileExists: boolean;
   /** The running Node.js version, e.g. "v24.21.0". */
   nodeVersion: string;
+  /**
+   * The npm_config_user_agent environment variable, which pnpm sets for every script it runs (for example
+   * "pnpm/12.9.0 npm/? node/v24.21.0 linux x64"), or undefined when this check runs outside a package manager.
+   */
+  userAgent: string | undefined;
 }
 
 /** Returns a list of policy violations; an empty list means the configuration is compliant. */
@@ -110,8 +115,22 @@ export function checkPolicy(input: PolicyInput): string[] {
     problems.push(
       'package.json "packageManager" must pin pnpm exactly with its sha512 hash (pnpm@x.y.z+sha512.<hex>).',
     );
-  } else if (pkg.engines?.["pnpm"] !== manager[1]) {
-    problems.push(`package.json "engines.pnpm" must equal the pinned pnpm version ${manager[1]}.`);
+  } else {
+    if (pkg.engines?.["pnpm"] !== manager[1]) {
+      problems.push(`package.json "engines.pnpm" must equal the pinned pnpm version ${manager[1]}.`);
+    }
+    // Defense in depth: an older pnpm normally switches itself to the pinned version, but if that switch fails it can fall back to
+    // running as itself. The user agent says which pnpm is really running this check; anything but the pinned pnpm fails.
+    if (input.userAgent !== undefined) {
+      const running = /^pnpm\/(\S+)\s/.exec(`${input.userAgent} `)?.[1];
+      if (running === undefined) {
+        problems.push(
+          `run this check through pnpm only (pnpm run check:policy), not ${JSON.stringify(input.userAgent.split(" ")[0])}.`,
+        );
+      } else if (running !== manager[1]) {
+        problems.push(`pnpm ${running} is running, but package.json pins pnpm ${manager[1]}.`);
+      }
+    }
   }
 
   const nvmrc = input.nvmrc.trim();
@@ -171,6 +190,7 @@ function main(): void {
     nvmrc: read(".nvmrc"),
     lockfileExists: existsSync(resolve("pnpm-lock.yaml")),
     nodeVersion: process.version,
+    userAgent: process.env["npm_config_user_agent"],
   });
   if (problems.length > 0) {
     console.error(`Dependency policy check failed:\n${problems.map((p) => `  - ${p}`).join("\n")}`);

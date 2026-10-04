@@ -13,6 +13,7 @@ function repositoryInput(): PolicyInput {
     nvmrc,
     lockfileExists: true,
     nodeVersion: `v${nvmrc.trim()}`,
+    userAgent: undefined,
   };
 }
 
@@ -51,6 +52,24 @@ describe("dependency policy check", () => {
       input.workspaceYaml += `\n${line}\n`;
       expect(checkPolicy(input)).toHaveLength(1);
     }
+  });
+
+  it("accepts the pinned pnpm as the running package manager", () => {
+    const input = repositoryInput();
+    input.userAgent = "pnpm/12.9.0 npm/? node/v24.21.0 linux x64";
+    expect(checkPolicy(input)).toEqual([]);
+  });
+
+  it("rejects a different pnpm version than the pin, as reported by npm_config_user_agent", () => {
+    const input = repositoryInput();
+    input.userAgent = "pnpm/12.8.2 npm/? node/v24.21.0 linux x64";
+    expect(checkPolicy(input)).toEqual([expect.stringContaining("pnpm 12.8.2 is running")]);
+  });
+
+  it("rejects running the check through another package manager", () => {
+    const input = repositoryInput();
+    input.userAgent = "npm/10.9.2 node/v24.21.0 linux x64 workspaces/false";
+    expect(checkPolicy(input)).toEqual([expect.stringContaining("through pnpm only")]);
   });
 
   it("rejects a different Node.js version", () => {
