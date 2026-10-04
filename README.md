@@ -10,7 +10,13 @@ Built with TypeScript, React and Vite; packages managed with pnpm under a strict
 
 ## Getting started
 
-Run `scripts/dev-setup.sh` once. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm (through Corepack), the project's packages, and the browser builds the tests use. Automatic installs of Node.js and the browsers cover Linux on x86-64 (Ubuntu 24.04 for the browsers); on other systems install Node.js 24.21.0 yourself (for example with nvm or fnm, which read `.nvmrc`) and the script tells you how to get the browsers.
+**Supported development platforms:** Ubuntu 24.04 on x86-64, and macOS 14 or later on Apple Silicon or Intel. CI checks every change on Ubuntu 24.04, on macOS 15 with Apple Silicon and on macOS 26 with Intel.
+
+Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm, the project's packages, and the browser builds the tests use. Playwright tells the script which browser builds your machine needs, and the script refuses any build it has no pinned hash for. When the script puts Node.js or pnpm in its own folder (`~/.local/share/bayandocs`), it prints the `export PATH=…` line to add to your shell profile.
+
+- **Ubuntu 24.04:** the script also installs the browsers' system libraries from a frozen, signed Ubuntu archive snapshot, which needs `sudo`.
+- **macOS:** open Terminal in the repository and run `scripts/dev-setup.sh`. Nothing needs installing first: the script works with what macOS includes (bash 3.2, curl, unzip, tar and shasum). The browsers go to `~/Library/Caches/ms-playwright`, where Playwright looks for them.
+- **Other systems** are not supported by the script. You can still install Node.js 24.21.0 and pnpm 12.9.0 yourself and the browsers with `pnpm exec playwright install chromium-headless-shell firefox webkit`, but those downloads are not checked against our pins.
 
 | Command | What it does |
 |---|---|
