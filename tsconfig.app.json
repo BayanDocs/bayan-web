@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Browser code: only the DOM's types, none of Node.js's, so code that would only work in Node.js fails the type check.
+    "types": []
+  },
+  "include": ["src"]
+}

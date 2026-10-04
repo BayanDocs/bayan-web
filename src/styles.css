@@ -1,0 +1,177 @@
+/* Theme tokens. Light is the default; dark applies when the system prefers it, unless the user picked a theme (data-theme on <html>). */
+:root {
+  color-scheme: light;
+  --color-bg: #f3f4f6;
+  --color-surface: #ffffff;
+  --color-text: #1b1f24;
+  --color-text-muted: #4b5563;
+  --color-border: #d1d5db;
+  --color-accent: #1f5fae;
+  --color-on-accent: #ffffff;
+  --color-focus: #1f5fae;
+  --color-page: #ffffff;
+  --color-page-shadow: rgb(0 0 0 / 0.18);
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #15181c;
+    --color-surface: #1f2328;
+    --color-text: #e6e8eb;
+    --color-text-muted: #a8b0ba;
+    --color-border: #3a4048;
+    --color-accent: #6ea8ff;
+    --color-on-accent: #0b1220;
+    --color-focus: #8fbcff;
+    --color-page: #2a2f36;
+    --color-page-shadow: rgb(0 0 0 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #15181c;
+  --color-surface: #1f2328;
+  --color-text: #e6e8eb;
+  --color-text-muted: #a8b0ba;
+  --color-border: #3a4048;
+  --color-accent: #6ea8ff;
+  --color-on-accent: #0b1220;
+  --color-focus: #8fbcff;
+  --color-page: #2a2f36;
+  --color-page-shadow: rgb(0 0 0 / 0.5);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.app-frame {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  height: 100%;
+}
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title-bar__name {
+  font-weight: 600;
+}
+
+.title-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.title-bar__link {
+  color: var(--color-accent);
+}
+
+.title-bar__link:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.ribbon {
+  min-height: 96px;
+  padding: 8px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.canvas-region {
+  overflow: auto;
+  padding: 24px;
+}
+
+.page-placeholder {
+  width: min(816px, 100%);
+  aspect-ratio: 8.5 / 11;
+  margin: 0 auto;
+  background: var(--color-page);
+  box-shadow: 0 1px 4px var(--color-page-shadow);
+}
+
+/* React Aria exposes state as data attributes (data-selected, data-focus-visible, …); style those rather than tracking state in React. */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.theme-switch__track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-bg);
+  transition: background 120ms;
+}
+
+.theme-switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  transition: transform 120ms;
+}
+
+.theme-switch[data-selected] .theme-switch__track {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.theme-switch[data-selected] .theme-switch__thumb {
+  background: var(--color-on-accent);
+  transform: translateX(14px);
+}
+
+.theme-switch[data-focus-visible] .theme-switch__track {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch__track,
+  .theme-switch__thumb {
+    transition: none;
+  }
+}

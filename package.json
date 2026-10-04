@@ -1,0 +1,42 @@
+{
+  "name": "bayan-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BayanDocs in the browser: a thin React shell around the bayan-core engine.",
+  "license": "GPL-3.0-or-later WITH AdditionRef-BayanDocs-App-Store-Permission",
+  "repository": "github:BayanDocs/bayan-web",
+  "type": "module",
+  "packageManager": "pnpm@12.9.0+sha512.8f64efa0b792986ca98ae568791bcd7722807e274c4f0c1d9853c62116495c584119db98762a2a5343b1684d361b9ae26fdd16d551666d7635346d3fae830ddd",
+  "engines": {
+    "node": "24.21.0",
+    "pnpm": "12.9.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/sri.ts dist && node scripts/check-licenses.ts dist && node scripts/size-report.ts dist",
+    "preview": "vite preview",
+    "check:policy": "node scripts/check-policy.ts",
+    "lint": "biome ci .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "audit": "pnpm audit",
+    "verify": "pnpm run check:policy && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:e2e && pnpm run audit"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-aria-components": "1.21.1",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.19.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  }
+}
