@@ -3,3 +3,5 @@ dist/
 test-results/
 playwright-report/
 *.tsbuildinfo
+# Python's bytecode cache (from running the tests of the DCO check in .github/dco/).
+__pycache__/
