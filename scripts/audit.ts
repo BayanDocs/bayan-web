@@ -45,32 +45,46 @@ function describe(advisory: Advisory): string {
 }
 
 /**
- * The advisories that pnpm-workspace.yaml tells the audit to ignore (`auditConfig.ignoreGhsas`), which the report leaves out. The
- * dependency-update runbook allows such an entry only as a temporary, commented exception while the only fix is younger than 24 hours;
- * the gate names every one of them on every run, so none is forgotten.
+ * The advisories that pnpm-workspace.yaml tells the audit to ignore (`auditConfig.ignoreGhsas` or `auditConfig.ignoreCves`), which the
+ * report leaves out. The dependency-update runbook allows such an entry only as a temporary, commented exception while the only fix is
+ * younger than 24 hours; the gate names every one of them on every run, so none is forgotten. The reader knows only the block layout
+ * the runbook shows (`auditConfig:`, then `  ignoreGhsas:`, then `    - GHSA-…` items, or a `[…]` list on the key's line), and throws on
+ * any other mention of audit exceptions, such as `auditConfig: {ignoreGhsas: […]}` or a quoted key, so that none can hide from the report.
  */
 export function ignoredAdvisories(workspaceYaml: string): string[] {
-  const lines = workspaceYaml.split(/\r?\n/);
   const ignored: string[] = [];
+  const mentionsExceptions = /auditConfig|ignoreGhsas|ignoreCves|GHSA-|CVE-/;
   let inAuditConfig = false;
   let inIgnoreList = false;
-  for (const line of lines) {
-    if (line.trim() === "" || /^\s*#/.test(line)) continue;
-    if (!/^\s/.test(line)) {
-      inAuditConfig = /^auditConfig\s*:/.test(line);
+  workspaceYaml.split(/\r?\n/).forEach((line, index) => {
+    if (line.trim() === "" || /^\s*#/.test(line)) return;
+    const unreadable = () =>
+      new Error(
+        `pnpm-workspace.yaml line ${index + 1} mentions audit exceptions in a form this check cannot read (${JSON.stringify(line.trim())}); write them as the dependency-update runbook shows: "auditConfig:", then "  ignoreGhsas:", then one "    - GHSA-…" item per advisory.`,
+      );
+    if (!line.startsWith(" ")) {
+      inAuditConfig = /^auditConfig:(?:\s+#.*)?$/.test(line);
       inIgnoreList = false;
-      continue;
+      if (!inAuditConfig && mentionsExceptions.test(line)) throw unreadable();
+      return;
     }
-    if (!inAuditConfig) continue;
-    const key = /^\s+(\w+)\s*:\s*(.*)$/.exec(line);
+    if (!inAuditConfig) {
+      if (mentionsExceptions.test(line)) throw unreadable();
+      return;
+    }
+    const key = /^ {2}(ignoreGhsas|ignoreCves):(?: (\[[^\]]*\]))?(?:\s+#.*)?$/.exec(line);
     if (key) {
-      inIgnoreList = key[1] === "ignoreGhsas";
-      if (inIgnoreList && (key[2] ?? "").trim() !== "") ignored.push(`ignoreGhsas: ${(key[2] ?? "").trim()}`);
-      continue;
+      inIgnoreList = key[2] === undefined;
+      if (key[2] !== undefined) ignored.push(`${key[1]}: ${key[2]}`);
+      return;
     }
-    const item = /^\s+-\s*(.*)$/.exec(line);
-    if (inIgnoreList && item) ignored.push(item[1] ?? "");
-  }
+    const item = /^ {4}- (\S.*)$/.exec(line);
+    if (inIgnoreList && item) {
+      ignored.push(item[1] ?? "");
+      return;
+    }
+    throw unreadable();
+  });
   return ignored;
 }
 
@@ -124,10 +138,16 @@ export function evaluateAudit(status: number | null, stdout: string, stderr: str
 
 function main(): void {
   const workspaceFile = resolve("pnpm-workspace.yaml");
-  const ignored = existsSync(workspaceFile) ? ignoredAdvisories(readFileSync(workspaceFile, "utf8")) : [];
+  let ignored: string[] = [];
+  try {
+    ignored = existsSync(workspaceFile) ? ignoredAdvisories(readFileSync(workspaceFile, "utf8")) : [];
+  } catch (error) {
+    console.error(`Audit failed: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   if (ignored.length > 0) {
     console.log(
-      `pnpm-workspace.yaml tells the audit to ignore these advisories (auditConfig.ignoreGhsas); remove each one as soon as its fix is at least 24 hours old:\n${ignored.map((line) => `  - ${line}`).join("\n")}`,
+      `pnpm-workspace.yaml tells the audit to ignore these advisories (auditConfig); remove each one as soon as its fix is at least 24 hours old:\n${ignored.map((line) => `  - ${line}`).join("\n")}`,
     );
   }
   // pnpm sets npm_execpath to its own executable, so the audit runs with the pinned pnpm that runs this script.

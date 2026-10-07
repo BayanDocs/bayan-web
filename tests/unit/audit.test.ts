@@ -93,13 +93,26 @@ describe("audit gate", () => {
       "    - GHSA-35jh-r3h4-6jhm",
       "    - GHSA-29mw-wpgm-hmr9 # second one",
       "trustPolicy: no-downgrade",
-      "ignoreGhsas:",
-      "  - GHSA-not-under-auditConfig",
     ].join("\n");
     expect(ignoredAdvisories(workspace)).toEqual(["GHSA-35jh-r3h4-6jhm", "GHSA-29mw-wpgm-hmr9 # second one"]);
     expect(ignoredAdvisories("auditConfig:\n  ignoreGhsas: [GHSA-a, GHSA-b]\n")).toEqual([
       "ignoreGhsas: [GHSA-a, GHSA-b]",
     ]);
+    expect(ignoredAdvisories("auditConfig:\n  ignoreCves:\n    - CVE-2026-0001\n")).toEqual(["CVE-2026-0001"]);
+  });
+
+  // pnpm reads every YAML layout; an exception the reader cannot see would be honoured by pnpm and never reported.
+  it("refuses audit exceptions in a form it cannot read", () => {
+    for (const workspace of [
+      "auditConfig: {ignoreGhsas: [GHSA-35jh-r3h4-6jhm]}\n",
+      '"auditConfig":\n  ignoreGhsas:\n    - GHSA-35jh-r3h4-6jhm\n',
+      "? auditConfig\n: {ignoreGhsas: [GHSA-35jh-r3h4-6jhm]}\n",
+      "auditConfig:\n    ignoreGhsas:\n      - GHSA-35jh-r3h4-6jhm\n",
+      "auditConfig:\n  ignoreGhsas:\n    - GHSA-35jh-r3h4-6jhm\n  somethingElse: true\n",
+      "ignoreGhsas:\n  - GHSA-not-under-auditConfig\n",
+    ]) {
+      expect(() => ignoredAdvisories(workspace), workspace).toThrow(/cannot read/);
+    }
   });
 
   it("fails on a severity it does not know", () => {
