@@ -23,7 +23,7 @@ Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs ever
 | `pnpm dev` | Development server at http://localhost:5173 with the same security headers as production (except `Integrity-Policy`). |
 | `pnpm build` | Production build in `dist/`, then Subresource Integrity hashes and a size report. |
 | `pnpm preview` | Serves `dist/` at http://localhost:4173 with the production security headers. |
-| `pnpm verify` | The full verification gate: policy check, lint, type check, unit tests, build, end-to-end tests in Chromium, Firefox and WebKit, and `pnpm audit`. Run it before every push. |
+| `pnpm verify` | The full verification gate: policy check, lockfile integrity check, lint, type check, unit tests, build, end-to-end tests in Chromium, Firefox and WebKit, and the audit (fails on high and critical advisories). Run it before every push. |
 | `pnpm format` | Formats the code with Biome. |
 
 Use pnpm only, never npm or Yarn; the dependency rules are in [AGENTS.md](AGENTS.md#dependency-mechanisms).
