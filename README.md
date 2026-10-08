@@ -41,7 +41,7 @@ if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/s
 | `src/` | The React application: the frame with its ribbon and canvas regions, themes and controls. |
 | `config/security-headers.ts` | The HTTP security headers (Content Security Policy, Trusted Types, cross-origin isolation, `Integrity-Policy`), used by the dev and preview servers. |
 | `deploy/nginx/` | A sample production configuration that sends the same headers; a unit test keeps it in sync. |
-| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `sri.ts` (integrity hashes), `check-licenses.ts` (third-party licence notices) and `size-report.ts` (bundle size budget). |
+| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `check-lockfile-integrity.ts` (where the locked packages come from), `audit.ts` (the audit gate), `pnpm-settings.ts` and `strict-yaml.ts` (how those three read pnpm's settings and YAML files), `sri.ts` (integrity hashes), `check-licenses.ts` (third-party licence notices) and `size-report.ts` (bundle size budget). |
 | `tests/unit/`, `tests/e2e/` | Vitest unit tests and Playwright end-to-end tests. |
 | `pnpm-workspace.yaml`, `.npmrc` | Package-manager settings that enforce the supply-chain policy (ADR-0017). |
 
