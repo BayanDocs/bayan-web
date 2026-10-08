@@ -1,4 +1,5 @@
 # pnpm settings for bayan-web. These enforce the dependency policy in ADR-0017; change them only together with that ADR and AGENTS.md.
+# The checks read this file strictly (scripts/pnpm-settings.ts): only the settings listed there, written as "name: value" in the layout pnpm writes, with comments on lines of their own.
 
 # Never resolve or install a version published less than 24 hours (1440 minutes) ago. Strict mode fails the install instead of falling back to an older version, and frozen installs re-check the versions already in pnpm-lock.yaml.
 minimumReleaseAge: 1440

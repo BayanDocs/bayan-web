@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkAllowBuilds, checkPolicy, type PolicyInput } from "../../scripts/check-policy.ts";
+import { checkPolicy, type PolicyInput } from "../../scripts/check-policy.ts";
+import { recordedPnpmConfig } from "./fixtures/pnpm-config.ts";
 
 const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 
@@ -14,6 +15,7 @@ function repositoryInput(): PolicyInput {
     lockfileExists: true,
     nodeVersion: `v${nvmrc.trim()}`,
     userAgent: undefined,
+    pnpmConfig: { config: recordedPnpmConfig },
   };
 }
 
@@ -48,11 +50,44 @@ describe("dependency policy check", () => {
       "minimumReleaseAgeExclude:\n  - foo",
       "dangerouslyAllowAllBuilds: true",
       "trustPolicyExclude:\n  - foo@1.0.0",
+      "auditLevel: critical",
+      "configDependencies:\n  pnpm-plugin-x: 1.0.0+sha512-abc",
     ]) {
       const input = repositoryInput();
       input.workspaceYaml += `\n${line}\n`;
-      expect(checkPolicy(input)).toHaveLength(1);
+      expect(checkPolicy(input), line).toHaveLength(1);
     }
+  });
+
+  // The review of X-003 changed what pnpm 12.9.0 applies with each of these lines, while the line-by-line check passed.
+  it("rejects settings written in quotes or with escapes", () => {
+    for (const line of [
+      '"dangerouslyAllowAllBuilds": true',
+      '"minimumReleaseAgeExclude": ["react"]',
+      '"regis\\x74ry": "https://npm.mirror.invalid/"',
+      '"audit\\x43onfig": {"ignore\\x47hsas": ["\\x47HSA-35jh-r3h4-6jhm"]}',
+    ]) {
+      const input = repositoryInput();
+      input.workspaceYaml += `${line}\n`;
+      expect(checkPolicy(input), line).toEqual([expect.stringContaining("cannot read the file with certainty")]);
+    }
+  });
+
+  it("rejects what pnpm applies when it breaks the policy, wherever the setting comes from", () => {
+    const input = repositoryInput();
+    input.pnpmConfig = { config: { ...recordedPnpmConfig, minimumReleaseAge: 0, dangerouslyAllowAllBuilds: true } };
+    expect(checkPolicy(input)).toEqual([
+      expect.stringContaining("pnpm applies minimumReleaseAge = 0"),
+      expect.stringContaining("dangerouslyAllowAllBuilds lets every dependency run install scripts"),
+    ]);
+    input.pnpmConfig = { error: "could not run pnpm config list: spawn pnpm ENOENT" };
+    expect(checkPolicy(input)).toEqual([expect.stringContaining("Cannot check the settings pnpm applies")]);
+  });
+
+  it("rejects an .npmrc line it does not know, because pnpm reads registry settings there", () => {
+    const input = repositoryInput();
+    input.npmrc += "@acme:registry=https://npm.mirror.invalid/\n";
+    expect(checkPolicy(input)).toEqual([expect.stringContaining('"@acme:registry=https://npm.mirror.invalid/"')]);
   });
 
   it("accepts the pinned pnpm as the running package manager", () => {
@@ -84,49 +119,5 @@ describe("dependency policy check", () => {
     input.lockfileExists = false;
     input.npmrc = "";
     expect(checkPolicy(input)).toHaveLength(4);
-  });
-});
-
-describe("allowBuilds check", () => {
-  const yaml = (allowBuilds: string) => `strictDepBuilds: true\n${allowBuilds}\ntrustPolicy: no-downgrade\n`;
-
-  it('accepts "allowBuilds: {}"', () => {
-    expect(checkAllowBuilds(yaml("allowBuilds: {}"))).toEqual([]);
-  });
-
-  it('accepts explicit denials such as "fsevents: false"', () => {
-    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false"))).toEqual([]);
-    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false\n  '@scope/pkg': false\n  # a comment"))).toEqual([]);
-  });
-
-  it("rejects a true entry, even one hidden after a comment or blank line", () => {
-    expect(checkAllowBuilds(yaml("allowBuilds:\n  esbuild: true"))).toEqual([expect.stringContaining("must not let")]);
-    expect(checkAllowBuilds(yaml("allowBuilds:\n  fsevents: false\n# note\n\n  esbuild: true"))).toEqual([
-      expect.stringContaining("must not let"),
-    ]);
-  });
-
-  it("rejects flow-style maps", () => {
-    expect(checkAllowBuilds(yaml("allowBuilds: { fsevents: false }"))).toHaveLength(1);
-    expect(checkAllowBuilds(yaml("allowBuilds: {esbuild: true}"))).toHaveLength(1);
-  });
-
-  it("fails closed on anything it cannot read with certainty", () => {
-    for (const block of [
-      "allowBuilds:\n  fsevents: no",
-      "allowBuilds:\n  fsevents: false # macOS",
-      "allowBuilds:\n    fsevents: false",
-      "allowBuilds:\n\tfsevents: false",
-      "allowBuilds: {}\n  esbuild: false",
-      "allowBuilds:",
-      "allowBuilds: null",
-    ]) {
-      expect(checkAllowBuilds(yaml(block)), block).not.toEqual([]);
-    }
-  });
-
-  it("requires allowBuilds exactly once", () => {
-    expect(checkAllowBuilds("strictDepBuilds: true\n")).toHaveLength(1);
-    expect(checkAllowBuilds(yaml("allowBuilds: {}\n'allowBuilds':\n  esbuild: true"))).toHaveLength(1);
   });
 });
