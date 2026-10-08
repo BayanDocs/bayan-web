@@ -1,11 +1,16 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { checkLockfileIntegrity, countPackages, type LockfileInput } from "../../scripts/check-lockfile-integrity.ts";
 
 const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 
 function repositoryInput(): LockfileInput {
-  return { lockfile: read("pnpm-lock.yaml"), npmrc: read(".npmrc"), workspaceYaml: read("pnpm-workspace.yaml") };
+  return {
+    lockfile: read("pnpm-lock.yaml"),
+    npmrc: read(".npmrc"),
+    workspaceYaml: read("pnpm-workspace.yaml"),
+    rootFiles: readdirSync(new URL("../../", import.meta.url)),
+  };
 }
 
 /** This repository's lockfile with one change, which must be the only text it replaces. */
@@ -178,7 +183,7 @@ describe("lockfile integrity check", () => {
     expect(checkLockfileIntegrity(inlineDocument)).not.toEqual([]);
   });
 
-  it("rejects another registry, however it is written", () => {
+  it("rejects another registry in .npmrc or pnpm-workspace.yaml", () => {
     const input = repositoryInput();
     const npmrc = (line: string) => checkLockfileIntegrity({ ...input, npmrc: `${input.npmrc}${line}\n` });
     expect(npmrc("registry=https://registry.example.org/")).toEqual([expect.stringContaining(".npmrc line")]);
@@ -198,6 +203,10 @@ describe("lockfile integrity check", () => {
     const explicitKey = workspace("\n? registry\n: https://registry.example.org/\n");
     expect(explicitKey.length).toBeGreaterThan(0);
     expect(explicitKey.every((problem) => problem.startsWith("pnpm-workspace.yaml line"))).toBe(true);
+    // The review of X-003 found that pnpm 12.9.0 reads this escaped key as "registry".
+    expect(workspace('\n"regis\\x74ry": "https://npm.mirror.invalid/"\n')).toEqual([
+      expect.stringContaining("cannot read the file with certainty"),
+    ]);
     expect(workspace("\nregistry: https://registry.npmjs.org/\n")).toEqual([]);
     expect(workspace("\n# Packages come only from the npm registry.\n")).toEqual([]);
   });
@@ -210,7 +219,7 @@ describe("lockfile integrity check", () => {
     const section = withLockfile("\nsnapshots:\n", "\nsurprise:\n  anything: here\n\nsnapshots:\n");
     expect(checkLockfileIntegrity(section).join("\n")).toContain('unknown section "surprise"');
     const comment = withLockfile("\nsettings:\n", "\n# a comment\nsettings:\n");
-    expect(checkLockfileIntegrity(comment).join("\n")).toContain("comments are not part of the lockfile format");
+    expect(checkLockfileIntegrity(comment).join("\n")).toContain("comments are not part of this file's format");
     expect(checkLockfileIntegrity({ ...repositoryInput(), lockfile: "" })).toEqual(["pnpm-lock.yaml is empty."]);
   });
 
@@ -222,5 +231,24 @@ describe("lockfile integrity check", () => {
     expect(checkLockfileIntegrity(input)).toEqual([
       expect.stringContaining("@pnpm/exe.linux-x64@12.9.0 resolves through tarball"),
     ]);
+  });
+
+  // A pnpmfile's hooks can change pnpm's settings: the review of X-003 redirected pnpm's registry with one (`updateConfig`), which neither
+  // `pnpm config list` nor the other checks see. pnpm 12.9.0 loads `.pnpmfile.cjs` and `.pnpmfile.mjs` from the top folder.
+  it("rejects a pnpmfile in the repository, and a lockfile that pnpm wrote with one", () => {
+    for (const name of [".pnpmfile.cjs", ".pnpmfile.mjs", "pnpmfile.js"]) {
+      const input = { ...repositoryInput(), rootFiles: [...repositoryInput().rootFiles, name] };
+      expect(checkLockfileIntegrity(input), name).toEqual([expect.stringContaining(`${name}: pnpm loads a pnpmfile`)]);
+    }
+    const checksum = withLockfile(/^importers:$/m, "pnpmfileChecksum: sha256-0123456789abcdef\n\nimporters:");
+    expect(checkLockfileIntegrity(checksum)).toEqual([expect.stringContaining("pnpm ran a pnpmfile")]);
+  });
+
+  it("rejects configuration dependencies, which pnpm installs first and which can bring pnpmfile hooks", () => {
+    const input = withLockfile(
+      / {4}configDependencies: \{\}\n/,
+      "    configDependencies:\n      pnpm-plugin-x:\n        specifier: 1.0.0+sha512-abc\n        version: 1.0.0+sha512-abc\n",
+    );
+    expect(checkLockfileIntegrity(input)).toEqual([expect.stringContaining("the importer . has configDependencies")]);
   });
 });
