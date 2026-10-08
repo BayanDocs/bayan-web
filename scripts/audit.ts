@@ -1,15 +1,36 @@
-// The audit gate (ADR-0017 rule 7; work package X-003): runs `pnpm audit --json` and fails on any advisory of high or critical severity.
-// Advisories of moderate, low or informational severity are reported but do not fail the gate; they are handled in the next batched dependency
-// session, and a Dependabot security alert fires for them too. The gate also fails when the audit could not run at all (for example when the
-// registry's advisory service does not answer), so that "no advisories" is never assumed. CI runs it on every pull request, on pushes to main
-// and nightly, so that new advisories against unchanged dependencies are noticed.
+// The audit gate (ADR-0017 rule 7; work package X-003): fails on any advisory of high or critical severity against the packages in
+// pnpm-lock.yaml, unless pnpm-workspace.yaml names it as a temporary exception. Advisories of moderate, low or informational severity are
+// reported but do not fail the gate; they are handled in the next batched dependency session, and a Dependabot security alert fires for them
+// too. The gate also fails when the audit could not run at all (for example when the registry's advisory service does not answer), so that
+// "no advisories" is never assumed. CI runs it on every pull request, on pushes to main and nightly, so that new advisories against unchanged
+// dependencies are noticed.
 //
-// Usage: pnpm run audit   (runs `pnpm audit --json` with the pnpm that runs this script)
+// The decision is this script's, not pnpm's. pnpm applies audit exceptions and audit levels written in any YAML layout and from sources
+// outside the repository, so the script asks pnpm for every advisory, with no exception applied and no level hidden (`auditArguments`
+// below), and applies only the exceptions it reads itself: the GHSA identifiers in auditConfig.ignoreGhsas of pnpm-workspace.yaml, read
+// strictly by scripts/pnpm-settings.ts, which the gate names on every run. It also fails when pnpm counts more high or critical advisories
+// than its report lists (then something still hides some), and when the exceptions pnpm itself applies (`audit.ignore` in `pnpm config list
+// --json`) are not exactly the ones it read, so that `pnpm audit` run by hand shows what the gate decides.
+//
+// Usage: pnpm run audit   (runs pnpm with the pnpm that runs this script)
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  auditExceptions,
+  checkEffectiveAudit,
+  checkWorkspaceSettings,
+  pnpmCommand,
+  readEffectiveSettings,
+} from "./pnpm-settings.ts";
+
+/**
+ * How the gate runs the audit: as JSON, listing every severity (`--audit-level info`, which overrides an audit level from the
+ * configuration), and without pnpm-workspace.yaml (`--ignore-workspace`), so that pnpm applies none of its exceptions.
+ */
+export const auditArguments: readonly string[] = ["audit", "--json", "--audit-level", "info", "--ignore-workspace"];
 
 /** The severities that fail the gate. */
 export const failingSeverities: readonly string[] = ["critical", "high"];
@@ -22,6 +43,10 @@ export interface AuditResult {
   failures: string[];
   /** Advisories that are reported without failing the gate. */
   reported: string[];
+  /** High or critical advisories that a named exception lets pass. */
+  excepted: string[];
+  /** Named exceptions that match no advisory any more, and can be removed. */
+  unusedExceptions: string[];
 }
 
 interface Advisory {
@@ -29,6 +54,7 @@ interface Advisory {
   severity?: unknown;
   title?: unknown;
   url?: unknown;
+  github_advisory_id?: unknown;
   vulnerable_versions?: unknown;
   patched_versions?: unknown;
   findings?: unknown;
@@ -45,59 +71,23 @@ function describe(advisory: Advisory): string {
 }
 
 /**
- * The advisories that pnpm-workspace.yaml tells the audit to ignore (`auditConfig.ignoreGhsas` or `auditConfig.ignoreCves`), which the
- * report leaves out. The dependency-update runbook allows such an entry only as a temporary, commented exception while the only fix is
- * younger than 24 hours; the gate names every one of them on every run, so none is forgotten. The reader knows only the block layout
- * the runbook shows (`auditConfig:`, then `  ignoreGhsas:`, then `    - GHSA-…` items, or a `[…]` list on the key's line), and throws on
- * any other mention of audit exceptions, such as `auditConfig: {ignoreGhsas: […]}` or a quoted key, so that none can hide from the report.
+ * Judges the output of `pnpm audit` run with `auditArguments`: `status` is its exit status (0 when nothing was found, 1 when advisories were
+ * found or the audit failed), `stdout` its JSON report and `stderr` its error output. `exceptions` are the GHSA identifiers that
+ * pnpm-workspace.yaml names; only they can let a high or critical advisory pass.
  */
-export function ignoredAdvisories(workspaceYaml: string): string[] {
-  const ignored: string[] = [];
-  const mentionsExceptions = /auditConfig|ignoreGhsas|ignoreCves|GHSA-|CVE-/;
-  let inAuditConfig = false;
-  let inIgnoreList = false;
-  workspaceYaml.split(/\r?\n/).forEach((line, index) => {
-    if (line.trim() === "" || /^\s*#/.test(line)) return;
-    const unreadable = () =>
-      new Error(
-        `pnpm-workspace.yaml line ${index + 1} mentions audit exceptions in a form this check cannot read (${JSON.stringify(line.trim())}); write them as the dependency-update runbook shows: "auditConfig:", then "  ignoreGhsas:", then one "    - GHSA-…" item per advisory.`,
-      );
-    if (!line.startsWith(" ")) {
-      inAuditConfig = /^auditConfig:(?:\s+#.*)?$/.test(line);
-      inIgnoreList = false;
-      if (!inAuditConfig && mentionsExceptions.test(line)) throw unreadable();
-      return;
-    }
-    if (!inAuditConfig) {
-      if (mentionsExceptions.test(line)) throw unreadable();
-      return;
-    }
-    const key = /^ {2}(ignoreGhsas|ignoreCves):(?: (\[[^\]]*\]))?(?:\s+#.*)?$/.exec(line);
-    if (key) {
-      inIgnoreList = key[2] === undefined;
-      if (key[2] !== undefined) ignored.push(`${key[1]}: ${key[2]}`);
-      return;
-    }
-    const item = /^ {4}- (\S.*)$/.exec(line);
-    if (inIgnoreList && item) {
-      ignored.push(item[1] ?? "");
-      return;
-    }
-    throw unreadable();
-  });
-  return ignored;
-}
-
-/**
- * Judges the output of `pnpm audit --json`: `status` is its exit status (0 when nothing was found, 1 when advisories were found or the audit
- * failed), `stdout` its JSON report and `stderr` its error output.
- */
-export function evaluateAudit(status: number | null, stdout: string, stderr: string): AuditResult {
+export function evaluateAudit(
+  status: number | null,
+  stdout: string,
+  stderr: string,
+  exceptions: readonly string[],
+): AuditResult {
   const couldNotRun = (why: string): AuditResult => ({
     failures: [
       `pnpm audit did not produce a usable report (${why}), so the dependencies were not checked.${stderr.trim() ? `\n${stderr.trim()}` : ""}`,
     ],
     reported: [],
+    excepted: [],
+    unusedExceptions: [],
   });
   let report: unknown;
   try {
@@ -110,20 +100,39 @@ export function evaluateAudit(status: number | null, stdout: string, stderr: str
   if (typeof advisories !== "object" || advisories === null || typeof counts !== "object" || counts === null) {
     return couldNotRun("the report has no advisories or no vulnerability counts");
   }
-  const result: AuditResult = { failures: [], reported: [] };
+  const result: AuditResult = { failures: [], reported: [], excepted: [], unusedExceptions: [] };
   const listed = Object.values(advisories as Record<string, Advisory>);
+  const listedBySeverity = new Map<string, number>();
+  const matched = new Set<string>();
   for (const advisory of listed) {
     const severity = String(advisory.severity);
+    listedBySeverity.set(severity, (listedBySeverity.get(severity) ?? 0) + 1);
+    const identifier = typeof advisory.github_advisory_id === "string" ? advisory.github_advisory_id : undefined;
+    if (identifier !== undefined && exceptions.includes(identifier)) matched.add(identifier);
     if (!severities.includes(severity as (typeof severities)[number])) {
       result.failures.push(`advisory with an unknown severity: ${describe(advisory)}`);
-    } else if (failingSeverities.includes(severity)) {
-      result.failures.push(describe(advisory));
-    } else {
+    } else if (!failingSeverities.includes(severity)) {
       result.reported.push(describe(advisory));
+    } else if (identifier !== undefined && exceptions.includes(identifier)) {
+      result.excepted.push(`${identifier}: ${describe(advisory)}`);
+    } else {
+      result.failures.push(describe(advisory));
     }
   }
-  // The decision rests on the list of advisories. The counts are not compared with it, because pnpm leaves advisories that
-  // `auditConfig.ignoreGhsas` in pnpm-workspace.yaml excludes out of the list but still counts them (pnpm 12.9.0).
+  result.unusedExceptions = exceptions.filter((identifier) => !matched.has(identifier));
+  // pnpm counts every advisory by severity, also those it leaves out of the list (pnpm 12.9.0 leaves out the advisories that its exceptions
+  // and audit level hide). The gate's run applies neither, so the counts and the list agree unless something still hides advisories.
+  for (const severity of failingSeverities) {
+    const count = (counts as Record<string, unknown>)[severity];
+    const shown = listedBySeverity.get(severity) ?? 0;
+    if (typeof count !== "number") {
+      result.failures.push(`the report has no count of ${severity} advisories.`);
+    } else if (count !== shown) {
+      result.failures.push(
+        `pnpm counts ${count} ${severity} advisories but lists ${shown}, so something hides ${count > shown ? "some of them" : "nothing but miscounts"}: an exception or an audit level that pnpm applies from a source this script does not read (see \`pnpm config list --json\`).`,
+      );
+    }
+  }
   const counted = severities.reduce((total, severity) => {
     const count = (counts as Record<string, unknown>)[severity];
     return total + (typeof count === "number" ? count : 0);
@@ -136,43 +145,68 @@ export function evaluateAudit(status: number | null, stdout: string, stderr: str
   return result;
 }
 
+function fail(message: string, lines: readonly string[]): never {
+  console.error(`Audit failed: ${message}${lines.map((line) => `\n  - ${line}`).join("")}`);
+  process.exit(1);
+}
+
 function main(): void {
-  const workspaceFile = resolve("pnpm-workspace.yaml");
-  let ignored: string[] = [];
-  try {
-    ignored = existsSync(workspaceFile) ? ignoredAdvisories(readFileSync(workspaceFile, "utf8")) : [];
-  } catch (error) {
-    console.error(`Audit failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
-  if (ignored.length > 0) {
-    console.log(
-      `pnpm-workspace.yaml tells the audit to ignore these advisories (auditConfig); remove each one as soon as its fix is at least 24 hours old:\n${ignored.map((line) => `  - ${line}`).join("\n")}`,
+  // The exceptions, as this script reads them, and the check that pnpm applies exactly these.
+  const workspace = checkWorkspaceSettings(readFileSync(resolve("pnpm-workspace.yaml"), "utf8"));
+  if (workspace.problems.length > 0) {
+    fail(
+      "pnpm-workspace.yaml does not pass the strict reading of its settings, so its audit exceptions cannot be read with certainty:",
+      workspace.problems,
     );
   }
-  // pnpm sets npm_execpath to its own executable, so the audit runs with the pinned pnpm that runs this script.
-  const execpath = process.env["npm_execpath"];
-  const pnpm = execpath !== undefined && !/\.[cm]?js$/.test(execpath) ? execpath : "pnpm";
-  const audit = spawnSync(pnpm, ["audit", "--json"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (audit.error) {
-    console.error(`Could not run ${pnpm} audit: ${audit.error.message}`);
-    process.exit(1);
+  const exceptions = auditExceptions(workspace.settings);
+  const effective = readEffectiveSettings();
+  if ("error" in effective) fail("cannot check which audit exceptions pnpm applies:", [effective.error]);
+  const config = effective.config;
+  const audit =
+    typeof config === "object" && config !== null ? (config as Record<string, unknown>)["audit"] : undefined;
+  const auditProblems = checkEffectiveAudit(audit, exceptions);
+  if (auditProblems.length > 0)
+    fail("pnpm applies audit settings that pnpm-workspace.yaml does not show:", auditProblems);
+  if (exceptions.length > 0) {
+    console.log(
+      `pnpm-workspace.yaml names these audit exceptions (auditConfig.ignoreGhsas); remove each one as soon as its fix is at least 24 hours old:\n${exceptions.map((line) => `  - ${line}`).join("\n")}`,
+    );
   }
-  const { failures, reported } = evaluateAudit(audit.status, audit.stdout, audit.stderr);
+
+  const pnpm = pnpmCommand();
+  const run = spawnSync(pnpm, auditArguments, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (run.error) fail(`could not run ${pnpm} audit: ${run.error.message}`, []);
+  const { failures, reported, excepted, unusedExceptions } = evaluateAudit(
+    run.status,
+    run.stdout,
+    run.stderr,
+    exceptions,
+  );
+  if (excepted.length > 0) {
+    console.log(
+      `High or critical advisories that a named exception lets pass until their fix is eligible:\n${excepted.map((line) => `  - ${line}`).join("\n")}`,
+    );
+  }
+  if (unusedExceptions.length > 0) {
+    console.log(
+      `Audit exceptions that match no advisory any more; remove them from pnpm-workspace.yaml:\n${unusedExceptions.map((line) => `  - ${line}`).join("\n")}`,
+    );
+  }
   if (reported.length > 0) {
     console.log(
       `Advisories of moderate or lower severity (reported, not failing; fix them in the next dependency session):\n${reported.map((line) => `  - ${line}`).join("\n")}`,
     );
   }
   if (failures.length > 0) {
-    console.error(
-      `Audit failed: high or critical advisories, or no trustworthy report (ADR-0017 rule 7). Follow the security-alert procedure in the docs repository's developer/dependency-update-runbook.md:\n${failures.map((line) => `  - ${line}`).join("\n")}`,
+    fail(
+      "high or critical advisories, or no trustworthy report (ADR-0017 rule 7). Follow the security-alert procedure in the docs repository's developer/dependency-update-runbook.md:",
+      failures,
     );
-    process.exit(1);
   }
   console.log(
-    reported.length > 0
-      ? "Audit passed: no high or critical advisories."
+    reported.length > 0 || excepted.length > 0
+      ? "Audit passed: no high or critical advisories without an exception."
       : "Audit passed: no known vulnerabilities in the dependencies in pnpm-lock.yaml.",
   );
 }
