@@ -15,6 +15,7 @@ interface SentInput {
   text?: string;
   key?: string;
   ctrl?: boolean;
+  meta?: boolean;
 }
 
 /** Records the input messages the app sends to the engine's worker. */
@@ -30,13 +31,14 @@ async function recordInput(page: Page): Promise<void> {
         envelope.type !== "input.pointer"
       ) {
         const payload = envelope.payload ?? {};
-        const modifiers = payload["modifiers"] as { ctrl?: boolean } | undefined;
+        const modifiers = payload["modifiers"] as { ctrl?: boolean; meta?: boolean } | undefined;
         sent.push({
           type: envelope.type,
           ...(typeof payload["phase"] === "string" ? { phase: payload["phase"] } : {}),
           ...(typeof payload["text"] === "string" ? { text: payload["text"] } : {}),
           ...(typeof payload["key"] === "string" ? { key: payload["key"] } : {}),
           ...(modifiers?.ctrl ? { ctrl: true } : {}),
+          ...(modifiers?.meta ? { meta: true } : {}),
         });
       }
       return Reflect.apply(post, this, [message, transfer]);
@@ -151,9 +153,15 @@ test("the UI manifest's shortcuts go to the engine; clipboard shortcuts and Tab 
 }) => {
   await recordInput(page);
   await openAndFocus(page);
-  await page.keyboard.press("Control+b");
-  await page.keyboard.press("Control+c");
-  await expect.poll(() => sentInput(page)).toEqual([{ type: "input.key", key: "b", ctrl: true }]);
+  // The manifest's "Ctrl" is the platform's primary modifier, Command on Apple systems (src/input/keys.ts); the engine receives the
+  // modifiers as pressed.
+  const apple = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform));
+  const primary = apple ? "Meta" : "Control";
+  await page.keyboard.press(`${primary}+b`);
+  await page.keyboard.press(`${primary}+c`);
+  await expect
+    .poll(() => sentInput(page))
+    .toEqual([{ type: "input.key", key: "b", ...(apple ? { meta: true } : { ctrl: true }) }]);
   // Shift+Tab moves keyboard focus out of the editable text, to the scrollable pages around it: no keyboard trap (WCAG 2.1.2). WebKit,
   // like Safari, moves focus with Option (Alt) unless Full Keyboard Access is on.
   await page.keyboard.press(browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab");
