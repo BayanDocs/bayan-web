@@ -34,6 +34,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (2026-07-17)
         with:
           persist-credentials: false
+          # The whole history: scripts/check-engine-pin.sh reads when bayan-core.pin was changed, and refuses a shallow clone.
+          fetch-depth: 0
 
       - name: Build the engine package from the pinned bayan-core commit
         run: |
