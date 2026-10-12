@@ -5,8 +5,10 @@
 #
 #   1. Gets bayan-core at exactly the pinned commit: a clone of its own in ~/.cache/bayandocs/bayan-core (or $XDG_CACHE_HOME), or the
 #      checkout in $BAYAN_CORE_DIR, which must have the pinned commit checked out with no changes.
-#   2. Refuses a commit that is not on bayan-core's main branch at https://github.com/BayanDocs/bayan-core, so only reviewed and merged
-#      engine code is built. (GitHub serves any commit of a repository's fork network by its hash, so a hash alone proves nothing.)
+#   2. Refuses a commit that is not one of the commits of bayan-core's main branch at https://github.com/BayanDocs/bayan-core (a commit
+#      that was itself main's head, not one merged into it), so only reviewed and merged engine code is built. (GitHub serves any commit
+#      of a repository's fork network by its hash, so a hash alone proves nothing.) Refuses it, too, unless it reached main at least
+#      24 hours before now and before the commit that pinned it (ADR-0017 rule 4), like every other dependency version.
 #   3. Runs bayan-core's own scripts/dev-setup.sh --no-node --no-miri from that commit, which installs the Rust toolchain of its
 #      rust-toolchain.toml (rustup checks every download against the release's checksums) and wasm-bindgen at the version that commit
 #      pins, from the project's release archive checked against a pinned SHA-256. So the pins of the build tools live in one place.
@@ -56,11 +58,29 @@ else
   fi
 fi
 
-log "checking that $commit is on bayan-core's main branch"
+log "checking that $commit is on bayan-core's main branch and at least 24 hours old"
 git -C "$core" fetch --quiet "$CORE_URL" "+refs/heads/main:$MAIN_REF"
 git -C "$core" cat-file -e "$commit^{commit}" 2>/dev/null || git -C "$core" fetch --quiet "$CORE_URL" "$commit"
-git -C "$core" merge-base --is-ancestor "$commit" "$MAIN_REF" ||
-  die "$commit is not on the main branch of $CORE_URL; pin only merged bayan-core commits"
+# Main's own commits are its first parents. Pull requests reach bayan-core's main as one commit each, which GitHub writes when it merges
+# them, so such a commit's committer date is the time its code reached main; a commit merged into main keeps an earlier date.
+# (Matched without a pipe: grep -q would stop reading at the match, and pipefail would count rev-list's broken pipe as a failure.)
+first_parents="$(git -C "$core" rev-list --first-parent "$MAIN_REF")"
+case $'\n'"$first_parents"$'\n' in
+*$'\n'"$commit"$'\n'*) ;;
+*) die "$commit is not one of the commits of the main branch of $CORE_URL; pin only a commit of main itself" ;;
+esac
+merged_at="$(git -C "$core" log -1 --format=%ct "$commit")"
+now="$(date +%s)"
+# When the pin was made: the last commit that changed bayan-core.pin, or now while that change is not committed yet.
+pinned_at="$now"
+if git -C "$REPO_ROOT" diff --quiet HEAD -- bayan-core.pin 2>/dev/null; then
+  pinned_at="$(git -C "$REPO_ROOT" log -1 --format=%ct -- bayan-core.pin 2>/dev/null || true)"
+  [ -n "$pinned_at" ] || pinned_at="$now"
+fi
+[ $((now - merged_at)) -ge 86400 ] ||
+  die "$commit reached bayan-core's main less than 24 hours ago; pin a commit at least 24 hours old (ADR-0017 rule 4)"
+[ $((pinned_at - merged_at)) -ge 86400 ] ||
+  die "$commit was pinned less than 24 hours after it reached bayan-core's main; pin a commit at least 24 hours old (ADR-0017 rule 4)"
 
 if [ -z "${BAYAN_CORE_DIR:-}" ]; then
   git -C "$core" checkout --quiet --detach --force "$commit"

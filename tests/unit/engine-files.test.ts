@@ -14,7 +14,7 @@ import {
 import { checkEngine } from "../../scripts/check-engine.ts";
 import { engineScripts, unhashedScripts } from "../../scripts/sri.ts";
 
-const commit = "664c9992fc6626d61a3818164ada5e0ccf7d9050";
+const commit = "e7d6f1e1da00df143f88a6a00e041fc3bc188e3f";
 const folders: string[] = [];
 
 /** A stand-in for the engine package, with the files the app serves. */
