@@ -22,14 +22,39 @@ describe("security headers", () => {
   it("allows no third-party origins in any directive", () => {
     for (const [, ...sources] of cspDirectives) {
       for (const source of sources) {
-        expect(source).toMatch(/^('self'|'none'|'wasm-unsafe-eval'|'script'|blob:)$/);
+        expect(source).toMatch(/^('self'|'none'|'wasm-unsafe-eval'|'script'|blob:|bayan-script-url)$/);
       }
     }
   });
 
-  it("enforces Trusted Types with no policies", () => {
+  it("enforces Trusted Types with exactly one named policy, bayan-script-url, and no duplicates", () => {
     expect(directive(csp, "require-trusted-types-for")).toEqual(["'script'"]);
-    expect(directive(csp, "trusted-types")).toEqual(["'none'"]);
+    expect(directive(csp, "trusted-types")).toEqual(["bayan-script-url"]);
+  });
+
+  // WEB-002 AC-5: the policy of WEB-001 is unchanged, except for the one named Trusted Types policy that starts the engine worker.
+  it("is WEB-001's policy with only 'none' replaced by bayan-script-url in trusted-types", () => {
+    const web001 = [
+      ["default-src", "'self'"],
+      ["script-src", "'self'", "'wasm-unsafe-eval'"],
+      ["style-src", "'self'"],
+      ["img-src", "'self'", "blob:"],
+      ["font-src", "'self'"],
+      ["connect-src", "'self'"],
+      ["worker-src", "'self'"],
+      ["manifest-src", "'self'"],
+      ["object-src", "'none'"],
+      ["base-uri", "'none'"],
+      ["form-action", "'none'"],
+      ["frame-src", "'none'"],
+      ["frame-ancestors", "'none'"],
+      ["require-trusted-types-for", "'script'"],
+      ["trusted-types", "'none'"],
+    ];
+    const expected = web001.map((entry) =>
+      entry[0] === "trusted-types" ? ["trusted-types", "bayan-script-url"] : entry,
+    );
+    expect(cspDirectives).toEqual(expected);
   });
 
   it("locks down plugins, base URL, forms and framing", () => {
