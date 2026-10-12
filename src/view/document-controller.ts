@@ -504,7 +504,8 @@ export class DocumentController {
       if (report.drewOverlay && probe.overlay && !probe.overlayDrawn) {
         probe.overlayDrawn = true;
         recordDuration(measureNames.keyToOverlayDrawn, probe.start, drawnAt);
-        // The time inside the next frame's callback, not its timestamp (the frame's start, which can precede the key press).
+        // The time inside the next frame's callback, not its timestamp (the frame's start, which can precede the key press). That frame
+        // paints the overlay; painting, compositing and the display come after, so this is a lower bound of keystroke-to-pixel latency.
         requestAnimationFrame(() => recordDuration(measureNames.keyToOverlayFrame, probe.start, performance.now()));
       }
       const showsChange = report.arrived.some((tile) =>

@@ -7,11 +7,18 @@ export const measureNames = {
   engineStart: "bayan:engine-start",
   /** Of the integrity check (fetching and hashing the engine's three files) and starting the worker. */
   engineVerify: "bayan:engine-verify",
-  /** From a key press to the frame in which the compositor drew the overlay (caret) that the engine sent for it. */
+  /** From a key press to when the compositor drew the overlay (caret) that the engine sent for it into its canvas. */
   keyToOverlayDrawn: "bayan:key-to-overlay-drawn",
-  /** From a key press to the next animation frame after the overlay was drawn, when the browser renders it (an upper bound). */
+  /**
+   * From a key press to the start of the first animation frame after the overlay was drawn: the frame in which the browser will paint
+   * it. A lower bound of keystroke-to-pixel latency (PERF-04): painting, compositing and the display add to it, and headless browsers
+   * measure none of them.
+   */
   keyToOverlayFrame: "bayan:key-to-overlay-frame",
-  /** From a key press to the frame in which the compositor drew the re-rendered tile that shows the change. */
+  /**
+   * From a key press to when the compositor drew the re-rendered tile or patch that shows the change into its canvas. Also a lower
+   * bound: the wait for the next frame, painting, compositing and the display come after it.
+   */
   keyToTileDrawn: "bayan:key-to-tile-drawn",
 } as const;
 

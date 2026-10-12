@@ -1,0 +1,18 @@
+{
+  "browser": "chromium",
+  "platform": "darwin",
+  "name": "scroll-frames",
+  "figures": {
+    "frames": 121,
+    "frameIntervalMs": {
+      "count": 120,
+      "p50": 16.7,
+      "p95": 100,
+      "p99": 116.7,
+      "max": 133.3
+    },
+    "framesOver33ms": 22,
+    "framesWaitingForFreshTiles": 2,
+    "framesWithPlaceholder": 1
+  }
+}

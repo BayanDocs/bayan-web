@@ -1,0 +1,18 @@
+{
+  "browser": "chromium",
+  "platform": "linux",
+  "name": "zoom-frames",
+  "figures": {
+    "frames": 120,
+    "frameIntervalMs": {
+      "count": 119,
+      "p50": 16.7,
+      "p95": 16.7,
+      "p99": 16.7,
+      "max": 16.7
+    },
+    "framesOver33ms": 0,
+    "framesWaitingForFreshTiles": 70,
+    "framesWithPlaceholder": 0
+  }
+}

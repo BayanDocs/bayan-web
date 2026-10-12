@@ -8,10 +8,10 @@ The web shell now runs the engine the way ADR-0014 planned: bayan-core's WebAsse
 
 In plain language, what this spike shows:
 
-- **Drawing works and stays smooth** in Chromium and Firefox on Linux: scrolling and zooming run at 60 frames a second with no blank frames. Playwright's WebKit keeps up at a device-pixel ratio of 2 on CI's Apple Silicon Mac and at a ratio of 1 on Linux, but not at 2 on Linux in our container, which has no graphics processor. CI's macOS virtual machines also gave two results that point at the machines rather than the code (Chromium at 30 frames a second on Apple Silicon, every browser slow on Intel), which the manual pass on real Macs must settle; section 5 explains and says what to do.
+- **Drawing works and stays smooth** in Chromium and Firefox on Linux: scrolling and zooming run at 60 frames a second with no blank frames. Playwright's WebKit keeps up at a device-pixel ratio of 2 on CI's Apple Silicon Mac and at a ratio of 1 on Linux, but not at 2 on Linux in our container, which has no graphics processor. CI's macOS virtual machines also gave two results that point at the machines rather than the code (Chromium's headless shell irregular on Apple Silicon, every browser slow on Intel, where WebKit also showed blank areas while scrolling), which the manual pass on real Macs must settle; section 5 explains and says what to do.
 - **Typing and input methods work** through both bridges. Japanese, Chinese and Korean composition reaches the engine through EditContext and through the hidden text area, in Chromium with its input-method emulation; in Firefox and WebKit the hidden text area handles the same composition events correctly. A pass with real input methods in Firefox and Safari is still to be done by hand (section 8).
 - **A real screen reader reads the document.** Orca, the Linux screen reader, read the mirror's headings, paragraphs, list and table, and followed the engine's caret while typing, in Firefox and in Chromium; the transcripts are in [WEB-002-evidence/](WEB-002-evidence/). Passes with NVDA and VoiceOver are still to be done by hand (section 9).
-- **Keystroke latency is close to PERF-04 but not there yet.** The caret appears within about 16–19 ms at p95 in Chromium and Firefox at a normal typing pace; the typed character itself within 22–35 ms. Section 6 gives the figures and the plan.
+- **Keystroke latency is close to PERF-04, but not shown to meet it.** At a normal typing pace, the frame that will show the new caret starts 3.6–18.3 ms after the key at p95 in Chromium, Firefox and WebKit at a ratio of 1, and the typed character is drawn into the canvas within 22–38 ms. These are lower bounds: PERF-04 counts until the pixels change on the screen, which adds painting, compositing and the display, and headless browsers measure none of them. Section 6 gives the figures and the plan, which starts with measuring on real screens.
 - **The security configuration of WEB-001 is unchanged** apart from the one named policy AC-5 allows, and the engine's files are checked against hashes built into the app before the worker starts. Browsers check no integrity on a worker's scripts, so a gap remains, described in section 10.
 
 ## 2. What was built
@@ -60,20 +60,20 @@ flowchart LR
 
 | | Criterion | Status | Evidence |
 |---|---|---|---|
-| AC-1 | Smooth scrolling and zooming in Chromium, Firefox and WebKit (frame-time figures) | Met in Chromium and Firefox on Linux; in WebKit met at device-pixel ratio 1 on Linux and at 2 on CI's Apple Silicon Mac, not at 2 on Linux without a graphics processor nor on CI's Intel Mac | Section 5; `tests/e2e/canvas.spec.ts`, `canvas-hidpi.spec.ts`, `measurements.spec.ts` |
+| AC-1 | Smooth scrolling and zooming in Chromium, Firefox and WebKit (frame-time figures) | Met in Chromium and Firefox on Linux; in WebKit met at device-pixel ratio 1 on Linux and at 2 on CI's Apple Silicon Mac, not at 2 on Linux without a graphics processor nor on CI's Intel Mac; frames with a blank page in section 5 | Section 5; `tests/e2e/canvas.spec.ts`, `canvas-hidpi.spec.ts`, `measurements.spec.ts` |
 | AC-2 | Japanese, Chinese and Korean composition reaches the engine through EditContext (Chromium) and through the fallback (Firefox and Safari), with evidence | Met with automated evidence; real input methods in Firefox and Safari need the manual pass | Section 8; `tests/e2e/input.spec.ts` |
 | AC-3 | A screen reader reads the mirror's text in at least two browser/screen-reader combinations, with evidence | Met with Orca 46.1 + Firefox 155 and Orca 46.1 + Chromium 141; NVDA and VoiceOver passes are scripted for the owner | Section 9; [WEB-002-evidence/](WEB-002-evidence/); `tests/e2e/a11y.spec.ts` |
-| AC-4 | Keystroke-to-overlay latency reported, with a plan to meet PERF-04 if it is not met | Met: reported; PERF-04 not yet met; plan in section 6.4 | Section 6 |
+| AC-4 | Keystroke-to-overlay latency reported, with a plan to meet PERF-04 if it is not met | Met: reported, as lower bounds of PERF-04's keystroke-to-pixel latency; PERF-04 not shown to be met; plan in section 6.4, manual measurement on real hardware in section 6.5 | Section 6 |
 | AC-5 | CSP and Trusted Types unchanged except the one named policy `bayan-script-url` … tests in three engines | Met | Section 10; `tests/unit/security-headers.test.ts`, `tests/unit/trusted-types.test.ts`, `tests/e2e/engine.spec.ts` |
 
 ## 4. How the figures were measured
 
 - **Machine:** a cloud container with 4 virtual cores (Intel Xeon, 2.8 GHz), 15 GB of memory and **no graphics processor**: every browser rasterizes and composites in software.
-- **Browsers:** Playwright 1.63.0's builds, headless: Chromium 153.0.8010.12 (headless shell), Firefox 155.0, WebKit 26.6. Chromium and Firefox run at a device-pixel ratio of 1; WebKit runs Playwright's "Desktop Safari" profile, which has a ratio of 2 (four times the pixels), and was measured at 1 as well for comparison.
+- **Browsers:** Playwright 1.63.0's builds, headless: Chromium 153.0.8010.12 (headless shell), Firefox 155.0, WebKit 26.6. Chromium and Firefox run at a device-pixel ratio of 1; WebKit runs Playwright's "Desktop Safari" profile, which has a ratio of 2 (four times the pixels), and was measured at 1 as well for comparison, once, with a temporary Playwright configuration that the repository does not keep (section 13 gives it).
 - **Method:** `tests/e2e/measurements.spec.ts`, one browser at a time (`--workers 1`), against the production build served by `vite preview`, two runs; where the runs differ the table gives both. The app records User Timing measures (`src/metrics.ts`); the tests read them and the per-frame state of the compositor.
-- **Definitions:** *key → caret drawn*: from the `keydown` event to the moment the compositor drew the engine's new caret. *Key → caret frame*: to the next animation frame after that, when the browser renders it; this is the figure to compare with PERF-04's keystroke-to-pixel for the caret. *Key → character*: to the frame in which the re-rendered tile (or patch) that shows the typed character was drawn. *Steady typing*: 44 characters at one every 80 ms (about 12 a second, a fast typist). *Burst*: 40 characters as fast as Playwright sends them, far faster than anyone types, to show queuing.
+- **Definitions:** *key → caret drawn*: from the `keydown` event to the moment the compositor drew the engine's new caret. *Key → caret frame*: to the start of the next animation frame after that, the frame in which the browser will paint the caret. *Key → character*: to the moment the compositor drew the re-rendered tile (or patch) that shows the typed character into its canvas. Both stop before the browser paints, composites and presents the frame, and before the display shows it, which headless browsers do not measure: they are **lower bounds** of PERF-04's keystroke-to-pixel latency, the closest these runs can come to it (section 6.3). *Steady typing*: 44 characters at one every 80 ms (about 12 a second, a fast typist). *Burst*: 40 characters as fast as Playwright sends them, far faster than anyone types, to show queuing.
 
-CI runs the same measurements on Ubuntu 24.04, macOS 15 (Apple Silicon) and macOS 26 (Intel) and keeps them as the `measurements-<runner>` artifacts of each run; sections 5 and 6 give the macOS figures of one such run.
+CI runs the same measurements on Ubuntu 24.04, macOS 15 (Apple Silicon) and macOS 26 (Intel) and keeps them as the `measurements-<runner>` artifacts of each run for 30 days; sections 5 and 6 give the macOS figures of two such runs. The raw figures behind every table of this report are kept in [WEB-002-evidence/measurements/](WEB-002-evidence/measurements/).
 
 ## 5. AC-1: scrolling and zooming
 
@@ -90,18 +90,20 @@ While zooming, 66–110 frames per run showed the previous scale's tiles scaled 
 
 **WebKit at a ratio of 2.** Every scroll step redraws the whole canvas (2,560 × 1,100 device pixels here) from tiles, which Playwright's WebKit on Linux does in software in this container at about 16 frames a second; at a ratio of 1 the same code runs at about 55. The figures for macOS come from CI and from the manual pass; real Safari composites on the graphics processor. Should WebKit stay slow on real Macs, the remedy is to let the browser scroll the tiles itself: put the tiles in the scrolled content as small canvases (`ImageBitmapRenderingContext.transferFromImageBitmap`, no copy), so that scrolling needs no drawing by the page at all and continues even while the main thread is busy. That changes the compositor's structure, not the protocol; it is follow-up F5.
 
-**macOS in CI.** The same measurements, once each, from GitHub's macOS virtual machines (the `measurements-macos-15` and `measurements-macos-26-intel` artifacts of [CI run 38194327872](https://github.com/BayanDocs/bayan-web/actions/runs/38194327872), on commit `c2c64dc`). WebKit runs Playwright's "Desktop Safari" profile there, at a ratio of 2; Chromium and Firefox at 1. These are shared virtual machines running Playwright's builds, not Safari or Chrome on a person's Mac, so they show tendencies rather than final values:
+**macOS in CI.** The same measurements from GitHub's macOS virtual machines, in two CI runs: [run 38194327872](https://github.com/BayanDocs/bayan-web/actions/runs/38194327872) on commit `c2c64dc`, and [run 38221275967](https://github.com/BayanDocs/bayan-web/actions/runs/38221275967) on commit `194e88e`, which also has the compositor fix that releases scaled stand-in tiles before a frame is drawn (the `measurements-macos-15` and `measurements-macos-26-intel` artifacts, kept in [WEB-002-evidence/measurements/](WEB-002-evidence/measurements/)). WebKit runs Playwright's "Desktop Safari" profile there, at a ratio of 2; Chromium and Firefox at 1. These are shared virtual machines running Playwright's builds, not Safari or Chrome on a person's Mac, so they show tendencies rather than final values. Where the two runs differ, the table gives both:
 
 | Machine, browser | Scroll frames p50 / p95 / p99 | Frames over 33 ms | Frames waiting for fresh tiles / with a blank page | Zoom frames p50 / p95 / p99 | Zoom: frames over 33 ms / blank |
 |---|---|---|---|---|---|
-| macOS 15 (Apple Silicon), Chromium | 33.3 / 66.7 / 66.7 | 43 of 108 | 0 / 0 | 33.3 / 66.7 / 66.7 | 54 / 0 |
-| macOS 15 (Apple Silicon), Firefox | 16.7 / 19.9 / 22.5 | 0 of 220 | 0 / 0 | 16.3 / 20.1 / 22.2 | 0 / 0 |
-| macOS 15 (Apple Silicon), WebKit, ratio 2 | 16.7 / 19.2 / 23.7 | 1 of 222 | 6 / 0 | 16.6 / 18.0 / 20.8 | 0 / 0 |
-| macOS 26 (Intel), Chromium | 16.7 / 100 / 116.7 | 18 of 134 | 0 / 0 | 16.7 / 100 / 133.3 | 22 / 0 |
-| macOS 26 (Intel), Firefox | 31.4 / 32.9 / 63.1 | 2 of 118 | 1 / 0 | 31.2 / 32.6 / 33.3 | 0 / 0 |
-| macOS 26 (Intel), WebKit, ratio 2 | 33.2 / 149.6 / 210.9 | 40 of 81 | 66 / 21 | 33.1 / 128.1 / 508.7 | 118 / 0 |
+| macOS 15 (Apple Silicon), Chromium | 16.7–33.3 / 66.7–100 / 66.7–116.7 | 43 of 108 and 22 of 120 | 0–2 / 0–1 | 16.7–33.3 / 66.7–83.3 / 66.7–100 | 13–54 / 0 |
+| macOS 15 (Apple Silicon), Firefox | 16.7 / 19.9–20.1 / 22.5–33.3 | 0 of 220 and 1 of 217 | 0 / 0 | 16.3–16.5 / 18.9–20.1 / 20.1–22.2 | 0 / 0 |
+| macOS 15 (Apple Silicon), WebKit, ratio 2 | 16.7 / 19.2–19.5 / 23.7–31.2 | 1 of 222 and 1 of 219 | 1–6 / 0 | 16.6 / 18.0–19.6 / 20.8–41.0 | 0–3 / 0 |
+| macOS 26 (Intel), Chromium | 16.7 / 100–116.7 / 116.7–133.3 | 18 of 134 and 25 of 118 | 0 / 0 | 16.7 / 100 / 116.7–133.3 | 20–22 / 0 |
+| macOS 26 (Intel), Firefox | 31.4–33.5 / 32.9–35.2 / 35.7–63.1 | 2 of 118 and 66 of 112 | 0–1 / 0 | 31.2–33.4 / 32.6–35.0 / 33.3–35.7 | 0–59 / 0 |
+| macOS 26 (Intel), WebKit, ratio 2 | 33.2–41.6 / 149.6–690.9 / 210.9–751.5 | 40 of 81 and 21 of 31 | 22–66 / 10–21 | 33.1 / 128.1–378.8 / 508.7–812.4 | 118–141 / 0 |
 
-On the Apple Silicon machine, WebKit at a ratio of 2 scrolled and zoomed at 60 frames a second, with no blank page, which supports the explanation above: the slowness on Linux comes from drawing in software, not from the compositor's design. Two results there are not yet explained. Playwright's Chromium headless shell presented only every second frame on the Apple Silicon machine (every interval a multiple of 16.7 ms), while Firefox and WebKit on the same machine kept 60. The Intel machine was slow for every browser, Firefox included (about 32 frames a second), and WebKit there showed a blank area in 21 frames while scrolling, the only blank frames in any measurement. Both point at the virtual machines rather than the code, since the same code ran at 60 frames a second elsewhere, but only the manual pass on real Macs (section 8.2) can settle it; should real Safari on an Intel Mac show blank areas while scrolling, F5 applies.
+On the Apple Silicon machine, WebKit at a ratio of 2 scrolled and zoomed at 60 frames a second in both runs, with no blank page, which supports the explanation above: the slowness on Linux comes from drawing in software, not from the compositor's design. Two results are not yet explained. Playwright's Chromium headless shell on the Apple Silicon machine was irregular: in the first run it presented only every second frame (every interval a multiple of 16.7 ms, p50 33.3 ms), and in the second it kept 60 at the median but 22 of 120 scroll frames took longer than 33 ms and one showed a blank page, while Firefox and WebKit on the same machine kept 60 in both runs. The Intel machine was slow for every browser (Firefox at about 30 frames a second), and WebKit there showed a blank area in 21 and in 10 frames while scrolling. Both point at the virtual machines rather than the code, since the same code ran at 60 frames a second elsewhere, but only the manual pass on real Macs (sections 6.5 and 8.2) can settle it; should real Safari on an Intel Mac show blank areas while scrolling, F5 applies.
+
+**Frames with a blank page.** While scrolling, some frames showed a blank area where a page's tiles had not arrived yet: in WebKit at a ratio of 2 on Linux (12–13 per run in this container, and 12 on CI's Ubuntu machine in run 38221275967), in WebKit on the Intel Mac (21 and 10), and in one frame of Chromium on the Apple Silicon Mac (second run). Chromium and Firefox on Linux, and Firefox and WebKit on the Apple Silicon Mac, never showed one. While zooming, no frame in any run showed a blank page.
 
 ## 6. AC-4: keystroke latency
 
@@ -116,18 +118,18 @@ p50 / p95 / p99 in milliseconds, two runs:
 | WebKit, ratio 1 | 1.9 / 3.0 / 7.3 | 11.5 / 17.3 / 20.4 | 28.0 / 37.7 / 39.9 | — | — |
 | WebKit, ratio 2 | 3.4–3.8 / 28.7–29.4 / 31.7–35.0 | 21.8–23.8 / 51.4–57.1 / 55–60 | 21.7–23.7 / 54–58 / 103–117 | 35.8–38.5 / 70–73 / 77–81 | 35.7–39.4 / 70–73 / 77–80 |
 
-On CI's macOS virtual machines (one run each, the artifacts named in section 5):
+On CI's macOS virtual machines (the two runs named in section 5; where they differ, the table gives both):
 
 | Machine, browser | Steady: key → caret drawn | Steady: key → caret frame | Steady: key → character | Burst: key → caret frame | Burst: key → character |
 |---|---|---|---|---|---|
-| macOS 15 (Apple Silicon), Chromium | 10.7 / 60.4 / 123.5 | 51.9 / 112.3 / 200.7 | 69.9 / 133.9 / 213.4 | 78.2 / 101.4 / 104.9 | 77.4 / 100.7 / 104.2 |
-| macOS 15 (Apple Silicon), Firefox | 2.1 / 3.6 / 4.3 | 11.6 / 19.4 / 21.9 | 13.4 / 30.1 / 39.4 | 7.8 / 14.8 / 16.4 | 7.7 / 14.7 / 16.3 |
-| macOS 15 (Apple Silicon), WebKit, ratio 2 | 1.4 / 5.4 / 5.8 | 9.4 / 19.4 / 22.0 | 9.6 / 23.2 / 35.1 | 7.0 / 17.1 / 17.7 | 7.2 / 20.6 / 28.5 |
-| macOS 26 (Intel), Chromium | 1.7 / 73.8 / 106.2 | 8.7 / 128.8 / 163.7 | 25.4 / 163.7 / 228.9 | 70.4 / 103.6 / 108.0 | 70.2 / 103.5 / 107.9 |
-| macOS 26 (Intel), Firefox | 1.3 / 4.4 / 13.9 | 19.7 / 34.5 / 48.7 | 52.2 / 68.1 / 105.0 | 25.0 / 85.9 / 99.1 | 25.5 / 85.2 / 98.5 |
-| macOS 26 (Intel), WebKit, ratio 2 | 11.7 / 50.2 / 71.5 | 31.8 / 73.2 / 129.7 | 34.4 / 105.7 / 129.6 | 42.7 / 142.0 / 164.6 | 51.2 / 159.1 / 184.3 |
+| macOS 15 (Apple Silicon), Chromium | 10.7–21.6 / 60.4–94.7 / 110.2–123.5 | 39.8–51.9 / 112.3–114.4 / 137.8–200.7 | 69.9–71.8 / 133.9–160.9 / 179.3–213.4 | 37.7–78.2 / 50.6–101.4 / 52.1–104.9 | 38.1–77.4 / 50.5–100.7 / 52.0–104.2 |
+| macOS 15 (Apple Silicon), Firefox | 1.5–2.1 / 2.9–3.6 / 4.3–6.4 | 10.3–11.6 / 19.4–20.7 / 20.8–21.9 | 13.4–16.2 / 25.3–30.1 / 30.3–39.4 | 7.8–8.3 / 14.8–16.1 / 16.4–18.2 | 7.7–8.2 / 14.7–16.1 / 16.3–18.7 |
+| macOS 15 (Apple Silicon), WebKit, ratio 2 | 1.4–2.2 / 5.4–7.1 / 5.8–17.0 | 9.4–9.9 / 19.4–21.3 / 22.0–31.2 | 9.6–10.1 / 23.2–26.4 / 34.2–35.1 | 7.0–10.9 / 17.1–31.7 / 17.7–33.2 | 7.2–10.9 / 20.6–31.6 / 28.5–33.1 |
+| macOS 26 (Intel), Chromium | 1.2–1.7 / 53.8–73.8 / 86.9–106.2 | 8.7–22.5 / 104.8–128.8 / 163.7–192.7 | 25.4–34.3 / 117.3–163.7 / 204.1–228.9 | 70.4–119.7 / 103.6–195.1 / 108–204 | 70.2–142.8 / 103.5–207.7 / 107.9–215.7 |
+| macOS 26 (Intel), Firefox | 1.3 / 2.8–4.4 / 8.5–13.9 | 19.7–21.8 / 32.4–34.5 / 36.0–48.7 | 52.2–54.4 / 68.0–68.1 / 102.8–105.0 | 15.2–25.0 / 31.4–85.9 / 32.6–99.1 | 14.5–25.5 / 28.7–85.2 / 32.4–98.5 |
+| macOS 26 (Intel), WebKit, ratio 2 | 8.0–11.7 / 50.2–140.4 / 71.5–539.7 | 31.8–48.0 / 73.2–502.8 / 129.7–601.7 | 34.4–48.8 / 105.7–555.4 / 129.6–695.4 | 20.2–42.7 / 57.6–142.0 / 61.7–164.6 | 20.7–51.2 / 57.5–159.1 / 61.6–184.3 |
 
-Firefox and WebKit on the Apple Silicon machine match the Linux figures, WebKit now at a ratio of 2 (caret frame 19.4 ms at p95, against 51–57 on Linux), and in bursts come within 1–2 ms of PERF-04 for the caret. Chromium's headless shell there and every browser on the Intel machine are slower, in line with their frame times above.
+Firefox and WebKit on the Apple Silicon machine give figures close to the Linux ones, WebKit now at a ratio of 2 (caret frame 19.4–21.3 ms at p95, against 51–57 on Linux). Chromium's headless shell there and every browser on the Intel machine are slower, in line with their frame times above.
 
 The engine's own work is small: once the worker answers, the caret is drawn within 1–3 ms (*key → caret drawn*). What remains is waiting: for the next frame (up to 16.7 ms at 60 Hz), and in bursts for the worker, which handles one message at a time.
 
@@ -141,16 +143,32 @@ The first measurements, before the three changes below, gave at p95: Chromium 18
 
 ### 6.3 Against PERF-04
 
-PERF-04 asks for keystroke-to-pixel latency of at most 16 ms at p95 and 33 ms at p99. With steady typing, **the caret meets the p99 bound in Chromium, Firefox and WebKit at ratio 1, and misses the p95 bound by 1–3 ms in Firefox, in WebKit at ratio 1 and in one of two Chromium runs; the character misses the p95 bound everywhere (22–38 ms) and the p99 bound everywhere but in Firefox**. Bursts miss in Chromium and WebKit at ratio 2. These are headless browsers on a shared machine without a graphics processor, with the mock engine's trivial layout; real hardware will be faster for drawing and the real engine slower for layout, so the figures show the shape of the costs more than final values.
+PERF-04 asks for keystroke-to-pixel latency of at most 16 ms at p95 and 33 ms at p99: from the key press until the pixels change on the screen. The figures above stop earlier. *Key → caret frame* ends at the start of the frame in which the browser will paint the caret, and *key → character* when the compositor drew the character into its canvas; painting, compositing, presenting the frame and the display's own delay all come after, and headless browsers measure none of them. They are lower bounds: they can show that PERF-04 is missed, never that it is met. With steady typing, **even the lower bound for the caret misses the p95 bound by 1–3 ms in Firefox, in WebKit at ratio 1 and in one of two Chromium runs, and the lower bound for the character misses it everywhere** (p95 22–38 ms). At p99 the lower bounds stay within 33 ms for the caret in Chromium, Firefox and WebKit at ratio 1, and for the character only in Firefox; that does not show the real figures meet the bound. Bursts miss in Chromium and WebKit at ratio 2. These are headless browsers on a shared machine without a graphics processor, with the mock engine's trivial layout; real hardware will be faster for drawing and the real engine slower for layout, so the figures show the shape of the costs more than final values.
 
 ### 6.4 Plan to meet PERF-04
 
-1. **Measure on real hardware first** (owner, with the manual script of section 8.2): Chromium, Firefox and Safari on a Mac and on Windows, 60 Hz and 120 Hz screens. PERF-04's 16 ms at p95 is less than one 60 Hz frame including the wait for that frame, so on a 60 Hz screen it requires the engine's answer and the drawing to fit within the frame in which the key arrives.
+1. **Measure keystroke-to-pixel on real hardware first, the display included** (owner, with the manual script of section 6.5), because the automated figures are lower bounds: Chromium, Firefox and Safari on a Mac and on Windows, 60 Hz and 120 Hz screens. The browsers' own performance recorders give key → frame presented; a slow-motion camera gives key → pixel, the display included. PERF-04's 16 ms at p95 is less than one 60 Hz frame including the wait for that frame, so on a 60 Hz screen it requires the engine's answer and the drawing to fit within the frame in which the key arrives.
 2. **Keep the main thread and the worker free when a key arrives:** coalesce typed characters while a previous `input.text` is unanswered into one message (bursts), and never let tile work queue ahead of input (follow-up F6). Both are shell changes.
 3. **Render less per keystroke in the engine:** the engine already renders any rectangle; with the real rasterizer (ADR-0011, CORE-003), the shell should ask only for invalidated lines, which patches already do. The engine should invalidate the smallest region that changed.
 4. **Present sooner:** try a `desynchronized` 2D context for the overlay canvas, which lets Chromium show the caret without waiting for the compositor's next frame (follow-up F7), and draw the character as soon as its patch arrives (already done).
 5. **Move rasterization off the engine's message queue** in Phase 2, when the engine can use threads (ADR-0014 §8): a render thread or a second worker for tiles, so that input messages never wait behind rendering.
 6. **Re-measure in WEB-101** with the real engine, and record PERF-04's status in the Phase 1 gate review.
+
+### 6.5 Manual latency script (owner)
+
+Run `pnpm build && pnpm preview` on the machine itself and open http://localhost:4173 in each browser, with the window on a screen whose refresh rate you know (System Settings → Displays on macOS, Settings → Display → Advanced display on Windows). Click in the yellow box. Then two measurements per browser and screen:
+
+1. **Key → frame presented**, with the browser's own performance recorder: Chrome's DevTools Performance panel, Firefox's Profiler (Performance panel, "Graphics" preset), Safari's Web Inspector Timelines. Start recording, type a sentence at a normal pace for about ten seconds, stop. The app's `bayan:key-to-overlay-drawn` measures appear among the user timings; for at least 30 of them, read when the first frame after the measure's end was presented (Chrome's and Safari's frames track, Firefox's composite markers) and subtract the measure's start, the key press. This adds painting, compositing and presenting to the automated figures, but not the display.
+2. **Key → pixel, the display included**, with a camera: film the keyboard and the screen together in slow motion (a phone at 240 frames a second takes a picture every 4.2 ms), press a letter key 50 times at about one a second, and for each press count the video frames from the first one in which the key is fully down to the first one in which the caret has moved. The latency is the count times the frame interval. The key registers a little before it is fully down, so this overstates by at most a few milliseconds.
+
+Record for each: browser and version, system, screen and its refresh rate, method, and p50 and p95 (with 50 presses, p95 is the third-highest).
+
+| Browser | System | Screen, refresh rate | Key → frame presented p50 / p95 | Key → pixel (camera) p50 / p95 | Notes |
+|---|---|---|---|---|---|
+| Safari | macOS | | to do | to do | |
+| Chrome | macOS | | to do | to do | |
+| Firefox | macOS or Windows | | to do | to do | |
+| Chrome or Edge | Windows | | to do | to do | |
 
 ## 7. Worker messages, start-up and memory
 
@@ -170,10 +188,10 @@ Download size (gzip): the app without the engine 100.3 KB, the engine package wi
 
 - **Chromium, EditContext:** the DevTools protocol's input-method emulation (`Input.imeSetComposition`, `Input.insertText`) composes Japanese (に → にほ → にほん → にほんご → 日本語, committed as 日本語), Chinese (pinyin z → zh → zhong → zhong'w → zhong'wen, committed as 中文) and Korean (ㅎ → 하 → 한, then ㄱ → 구 → 국). The engine receives `start`, every `update` with its text, a last `update` with the committed text, `end`, then `input.text`; while composing it draws the blue boxes; afterwards its text is 日本語中文한국 and the bridge's caret is after it.
 - **Chromium, hidden text area:** the same, with EditContext removed before the app starts, so the app chooses the bridge Firefox and Safari use.
-- **Firefox and WebKit, hidden text area:** Playwright cannot drive an input method in these engines, so the test replays the events a browser fires on the text area while an input method composes (`compositionstart`, `compositionupdate` and `input` with `insertCompositionText` for each step, the commit as a last update, `compositionend`), in the real browser engines. The engine receives the same messages and ends with the same text.
+- **Firefox and WebKit, hidden text area:** Playwright cannot drive an input method in these engines, so the test replays the events a browser fires on the text area while an input method composes (`compositionstart`, `compositionupdate` and `input` with `insertCompositionText` for each step, then the commit as a last update and `compositionend`), in the real browser engines, in both orders browsers use for the end: the last `input` event before `compositionend` (Chromium and Safari) and after it (Firefox, whose last `input` event is no longer composing). The engine receives the same messages, except that in Firefox's order the committed text arrives with the end rather than as a last update, and ends with the same text.
 - Typing, Backspace, arrows, Home and End, the UI manifest's shortcuts (sent to the engine) and the clipboard shortcuts (left to the browser), Shift+Tab out of the document, and pasting plain text are tested in all three engines.
 
-What is not covered automatically: real input methods in Firefox and Safari, which differ in event order (Firefox sends `compositionend` before the last `input` event; Safari sends the key that ends a composition after `compositionend`, with keyCode 229, which the bridge ignores), candidate-window placement, Korean IMEs that commit each syllable, and dead keys and emoji pickers (I18N-07).
+What is not covered automatically: real input methods in Firefox and Safari, whose event orders the replays only imitate (Safari also sends the key that ends a composition after `compositionend`, with keyCode 229, which the bridge ignores), candidate-window placement, Korean IMEs that commit each syllable, and dead keys and emoji pickers (I18N-07).
 
 ### 8.2 Manual input-method script (owner)
 
@@ -199,7 +217,7 @@ Also try: a dead key (Option+E then E on a US keyboard gives é), the emoji pick
 
 ### 9.1 Evidence with Orca
 
-Orca 46.1 (Ubuntu 24.04's package) ran against a visible Firefox 155 and Chromium 141 on a virtual display in this container, with a debug log of everything it spoke. `tests/screen-reader/orca.ts` pressed keys and clicked through the X server (so Orca noticed them, as with a person at the keyboard) and wrote the transcripts in [WEB-002-evidence/orca-firefox.txt](WEB-002-evidence/orca-firefox.txt) and [WEB-002-evidence/orca-chromium.txt](WEB-002-evidence/orca-chromium.txt). Excerpts from Chromium; Firefox's are the same apart from the browser's own announcements:
+Orca 46.1 ran against a visible Firefox 155 and Chromium 141 on a virtual display in this container, with a debug log of everything it spoke. The Ubuntu 24.04 packages came from the live archive on 2026-10-12, at versions also in the snapshot of 2026-10-03 that `scripts/dev-setup.sh` uses: orca 46.1-1ubuntu1, at-spi2-core 2.52.0-1build1, dbus-x11 1.14.10-4ubuntu4.1, python3-pyatspi 2.46.1-1, xdotool 1:3.20160805.1-5build1 and xvfb 2:21.1.12-1ubuntu1.8, the newest of them uploaded on 2026-06-29. Chromium was the BayanDocs cloud environment's preinstalled full build, Chromium 141.0.7390.37 (Playwright's headless shell has no accessibility bridge); Firefox was Playwright's Firefox 155.0. `tests/screen-reader/orca.ts` pressed keys and clicked through the X server (so Orca noticed them, as with a person at the keyboard) and wrote the transcripts in [WEB-002-evidence/orca-firefox.txt](WEB-002-evidence/orca-firefox.txt) and [WEB-002-evidence/orca-chromium.txt](WEB-002-evidence/orca-chromium.txt). Excerpts from Chromium; Firefox's are the same apart from the browser's own announcements:
 
 ```text
 ORCA 'Page has 4 landmarks, 5 headings, 1 table, 2 unvisited links.'
@@ -307,11 +325,12 @@ The browser does not bind the worker's load to the bytes the app checked. A serv
 | F5 | Compositor: let the browser scroll the tiles (tile canvases in the scrolled content) if WebKit or Safari stays below 60 frames a second at ratio 2 on real hardware | bayan-web, WEB-101 | M |
 | F6 | Input: coalesce typed text while an `input.text` is unanswered; keep tile work behind input | bayan-web, WEB-101 | S |
 | F7 | Try a `desynchronized` 2D context for the overlay canvas, and measure on real 60 and 120 Hz screens | bayan-web | S |
-| F8 | Manual passes: real input methods (8.2) and NVDA and VoiceOver (9.2), with results in this report | owner | S |
+| F8 | Manual passes: real input methods (8.2), NVDA and VoiceOver (9.2), and keystroke-to-pixel latency on real screens, Safari and Chrome on real Macs included (6.5), with results in this report | owner | S |
 | F9 | Automated accessibility rules (axe, ADR-0014 §3) in the end-to-end tests: a new dependency, to be justified | bayan-web, WEB-102 | S |
 | F10 | Mirror aligned with the page (each node at its bounds), so VoiceOver's cursor and touch exploration match what is drawn | bayan-web, WEB-102 | M |
 | F11 | Cloud environment: build the engine package in the setup script (`BAYAN_CORE_DIR=/home/user/bayan-core scripts/engine-package.sh`) | docs, with the batched environment changes of docs issue 7 | S |
-| F12 | Run the Orca harness in CI (a nightly job on Ubuntu with the Ubuntu packages it needs) | bayan-web | M |
+| F12 | Run the Orca harness in CI (a nightly job on Ubuntu with the Ubuntu packages it needs, from the archive snapshot `tests/screen-reader/start-orca.sh` names) | bayan-web | M |
+| F13 | Unit tests for the compositor's cache logic (invalidation counts, patches, eviction), which only the end-to-end tests cover today | bayan-web, WEB-101 | S |
 
 ## 13. Reproducing
 
@@ -322,7 +341,22 @@ pnpm verify                               # everything, measurements included
 pnpm exec playwright test tests/e2e/measurements.spec.ts --workers 1   # the figures alone, in test-results/measurements/
 ```
 
-Screen-reader evidence (Ubuntu 24.04): install `orca at-spi2-core dbus-x11 python3-pyatspi xdotool xvfb` from the Ubuntu archive, then
+WebKit at a device-pixel ratio of 1 was measured once, with a temporary configuration file in the repository's top folder (not committed) that reuses `playwright.config.ts` with a single project, run with `pnpm exec playwright test -c <that file> tests/e2e/measurements.spec.ts --workers 1`:
+
+```ts
+import { devices } from "@playwright/test";
+import base from "./playwright.config.ts";
+export default { ...base, projects: [{ name: "webkit-dpr1", use: { ...devices["Desktop Safari"], deviceScaleFactor: 1 } }] };
+```
+
+Screen-reader evidence (Ubuntu 24.04, in a container or another machine without a desktop session): install the packages from the archive snapshot that `scripts/dev-setup.sh` uses, so that nothing younger than a day arrives (the versions are in section 9.1),
+
+```sh
+sudo apt-get update --snapshot 20261003T000000Z
+sudo apt-get install --no-install-recommends --snapshot 20261003T000000Z orca at-spi2-core dbus-x11 python3-pyatspi xdotool xvfb
+```
+
+then
 
 ```sh
 pnpm build && pnpm preview &              # serves the build on port 4173

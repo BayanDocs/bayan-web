@@ -1,0 +1,72 @@
+{
+  "browser": "firefox",
+  "platform": "darwin",
+  "name": "startup-roundtrips-memory",
+  "figures": {
+    "startup": {
+      "engineVerifyAndWorker": {
+        "count": 1,
+        "p50": 44.8,
+        "p95": 44.8,
+        "p99": 44.8,
+        "max": 44.8
+      },
+      "engineReady": {
+        "count": 1,
+        "p50": 157.2,
+        "p95": 157.2,
+        "p99": 157.2,
+        "max": 157.2
+      },
+      "navigationToEngineReady": 397
+    },
+    "roundTrips": {
+      "hello": {
+        "count": 1,
+        "p50": 112.4,
+        "p95": 112.4,
+        "p99": 112.4,
+        "max": 112.4
+      },
+      "ui.manifest": {
+        "count": 1,
+        "p50": 1.9,
+        "p95": 1.9,
+        "p99": 1.9,
+        "max": 1.9
+      },
+      "doc.open": {
+        "count": 1,
+        "p50": 0.5,
+        "p95": 0.5,
+        "p99": 0.5,
+        "max": 0.5
+      },
+      "view.set": {
+        "count": 1,
+        "p50": 0.3,
+        "p95": 0.3,
+        "p99": 0.3,
+        "max": 0.3
+      },
+      "query.a11y": {
+        "count": 1,
+        "p50": 4.9,
+        "p95": 4.9,
+        "p99": 4.9,
+        "max": 4.9
+      },
+      "render.tile": {
+        "count": 4,
+        "p50": 4.4,
+        "p95": 7.8,
+        "p99": 7.8,
+        "max": 7.8
+      }
+    },
+    "memory": {
+      "tilesHeld": 4,
+      "tileBytes": 3342336
+    }
+  }
+}
