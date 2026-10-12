@@ -16,8 +16,8 @@ export const measureNames = {
    */
   keyToOverlayFrame: "bayan:key-to-overlay-frame",
   /**
-   * From a key press to when the compositor drew the re-rendered tile or patch that shows the change into its canvas. Also a lower
-   * bound: the wait for the next frame, painting, compositing and the display come after it.
+   * From a key press to when the compositor drew the re-rendered tile or patch that shows the change into its canvas, inside a frame's
+   * animation callback. Also a lower bound: painting, compositing and the display come after it.
    */
   keyToTileDrawn: "bayan:key-to-tile-drawn",
 } as const;

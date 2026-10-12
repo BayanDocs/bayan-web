@@ -1,0 +1,72 @@
+{
+  "browser": "firefox",
+  "platform": "linux",
+  "name": "startup-roundtrips-memory",
+  "figures": {
+    "startup": {
+      "engineVerifyAndWorker": {
+        "count": 1,
+        "p50": 45.8,
+        "p95": 45.8,
+        "p99": 45.8,
+        "max": 45.8
+      },
+      "engineReady": {
+        "count": 1,
+        "p50": 222.9,
+        "p95": 222.9,
+        "p99": 222.9,
+        "max": 222.9
+      },
+      "navigationToEngineReady": 529
+    },
+    "roundTrips": {
+      "hello": {
+        "count": 1,
+        "p50": 177.1,
+        "p95": 177.1,
+        "p99": 177.1,
+        "max": 177.1
+      },
+      "ui.manifest": {
+        "count": 1,
+        "p50": 6.9,
+        "p95": 6.9,
+        "p99": 6.9,
+        "max": 6.9
+      },
+      "doc.open": {
+        "count": 1,
+        "p50": 1.9,
+        "p95": 1.9,
+        "p99": 1.9,
+        "max": 1.9
+      },
+      "view.set": {
+        "count": 1,
+        "p50": 0.9,
+        "p95": 0.9,
+        "p99": 0.9,
+        "max": 0.9
+      },
+      "query.a11y": {
+        "count": 1,
+        "p50": 17.7,
+        "p95": 17.7,
+        "p99": 17.7,
+        "max": 17.7
+      },
+      "render.tile": {
+        "count": 5,
+        "p50": 18.9,
+        "p95": 35.5,
+        "p99": 35.5,
+        "max": 35.5
+      }
+    },
+    "memory": {
+      "tilesHeld": 4,
+      "tileBytes": 3342336
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "browser": "firefox",
+  "platform": "linux",
+  "name": "keystroke-latency",
+  "figures": {
+    "steady": {
+      "keyToOverlayDrawn": {
+        "count": 44,
+        "p50": 3.4,
+        "p95": 5.1,
+        "p99": 5.8,
+        "max": 5.8
+      },
+      "keyToOverlayFrame": {
+        "count": 44,
+        "p50": 14.6,
+        "p95": 21.4,
+        "p99": 23.5,
+        "max": 23.5
+      },
+      "keyToTileDrawn": {
+        "count": 44,
+        "p50": 18.5,
+        "p95": 27.1,
+        "p99": 33.3,
+        "max": 33.3
+      }
+    },
+    "burst": {
+      "keyToOverlayDrawn": {
+        "count": 40,
+        "p50": 5.9,
+        "p95": 25,
+        "p99": 27.6,
+        "max": 27.6
+      },
+      "keyToOverlayFrame": {
+        "count": 40,
+        "p50": 12.4,
+        "p95": 27.9,
+        "p99": 37.8,
+        "max": 37.8
+      },
+      "keyToTileDrawn": {
+        "count": 40,
+        "p50": 15,
+        "p95": 39.4,
+        "p99": 45.7,
+        "max": 45.7
+      },
+      "roundTrips": {
+        "input.text": {
+          "count": 40,
+          "p50": 3.3,
+          "p95": 21,
+          "p99": 25.3,
+          "max": 25.3
+        },
+        "render.tile": {
+          "count": 24,
+          "p50": 5.1,
+          "p95": 21.2,
+          "p99": 24.2,
+          "max": 24.2
+        }
+      }
+    }
+  }
+}
