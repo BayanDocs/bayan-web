@@ -96,11 +96,14 @@ describe("EngineClient", () => {
     await expect(client.request("hello", { protocol_versions: [0] })).rejects.toBeInstanceOf(EngineUnavailableError);
     expect(states).toEqual(["ready", "failed"]);
     expect(client.state).toEqual({ kind: "failed", reason: "restart_failed" });
+    // After "failed" the worker host ignores every message, and the shell terminates the worker (spec §3.2).
+    expect(worker.terminated).toBe(true);
   });
 
   it("treats a worker that cannot load as failed", () => {
     const { worker, client } = setup();
     worker.dispatchEvent(new Event("error", { cancelable: true }));
     expect(client.state.kind).toBe("failed");
+    expect(worker.terminated).toBe(true);
   });
 });

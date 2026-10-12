@@ -117,7 +117,6 @@ export class EngineClient {
 
   /** Stops the worker. Pending requests reject with EngineUnavailableError. */
   terminate(): void {
-    this.#worker.terminate();
     this.#fail("terminated");
   }
 
@@ -163,8 +162,13 @@ export class EngineClient {
     }
   }
 
+  /**
+   * Stops for good. The worker is terminated: after `failed` its host ignores every message and the shell terminates it (spec §3.2), and
+   * a worker that could not load or sent a message that could not be read is of no further use either.
+   */
   #fail(reason: string): void {
     if (this.#state.kind === "failed") return;
+    this.#worker.terminate();
     this.#setState({ kind: "failed", reason });
     for (const pending of this.#pending.values()) {
       pending.reject(new EngineUnavailableError(`The engine stopped (${reason}).`));
