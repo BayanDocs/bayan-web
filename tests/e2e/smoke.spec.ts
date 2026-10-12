@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { collectProblems } from "./collect-problems.ts";
+import { waitForDocument } from "./document.ts";
 
 test("the application frame loads with no CSP violations or errors", async ({ page }) => {
   const problems = await collectProblems(page);
@@ -9,6 +10,8 @@ test("the application frame loads with no CSP violations or errors", async ({ pa
   await expect(page.getByRole("region", { name: "Ribbon" })).toBeVisible();
   await expect(page.getByRole("main", { name: "Document" })).toBeVisible();
   await expect(page.getByRole("switch", { name: "Dark theme" })).toBeVisible();
+  // The engine starts, opens its mock document and draws its first tiles without a violation either.
+  await waitForDocument(page);
 
   expect(await problems()).toEqual([]);
 });
@@ -41,11 +44,29 @@ test("the app works when the browser blocks site storage", async ({ page }) => {
 
 test("the title bar links to the third-party licence notices", async ({ page }) => {
   await page.goto("/");
-  const link = page.getByRole("banner").getByRole("link", { name: "Licenses" });
+  const link = page.getByRole("banner").getByRole("link", { name: "Licenses", exact: true });
   await expect(link).toHaveAttribute("href", "/third-party-licenses.txt");
   await link.click();
   await expect(page).toHaveURL(/\/third-party-licenses\.txt$/);
   await expect(page.locator("body")).toContainText("The app bundles dependencies which contain the following licenses");
+});
+
+// The engine's WebAssembly package contains code from Rust crates and the Rust standard library, whose licences require their notices
+// to accompany every copy (WEB-002; config/engine-files.ts publishes them from the package).
+test("the title bar links to the engine's licence notices", async ({ page, request }) => {
+  await page.goto("/");
+  const link = page.getByRole("banner").getByRole("link", { name: "Engine licenses", exact: true });
+  await expect(link).toHaveAttribute("href", "/engine-licenses/THIRD-PARTY-LICENSES.txt");
+  await link.click();
+  await expect(page).toHaveURL(/\/engine-licenses\/THIRD-PARTY-LICENSES\.txt$/);
+  await expect(page.locator("body")).toContainText("Third-party software in the BayanDocs engine WebAssembly package");
+  for (const path of [
+    "RUST-STANDARD-LIBRARY-COPYRIGHT.html",
+    "LICENSES/GPL-3.0-or-later.txt",
+    "LICENSES/LicenseRef-BayanDocs-App-Store-Permission.txt",
+  ]) {
+    expect((await request.get(`/engine-licenses/${path}`)).ok(), path).toBe(true);
+  }
 });
 
 test("the page is cross-origin isolated", async ({ page }) => {

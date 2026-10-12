@@ -84,6 +84,8 @@ export class DocumentController {
   #viewSetTimer: ReturnType<typeof setTimeout> | undefined;
   #resizeObserver: ResizeObserver | undefined;
   #resolutionQuery: MediaQueryList | undefined;
+  #watchingResize = false;
+  #devicePixelObserver: ResizeObserver | undefined;
   #destroyed = false;
 
   constructor(elements: DocumentElements, onStatus: (status: DocumentStatus) => void) {
@@ -200,6 +202,7 @@ export class DocumentController {
     this.#abort.abort();
     clearTimeout(this.#viewSetTimer);
     this.#resizeObserver?.disconnect();
+    this.#devicePixelObserver?.disconnect();
     this.#client?.terminate();
     this.#compositor.destroy();
     this.#bridge.destroy();
@@ -268,20 +271,34 @@ export class DocumentController {
     this.#watchResolution();
   }
 
-  /** devicePixelRatio changes when the window moves to another screen or the browser zooms: watch for the current value to stop matching. */
+  /**
+   * devicePixelRatio changes when the window moves to another screen or the browser zooms. The resolution media query reports a change of
+   * screen; browser zoom also resizes the window, and some changes (such as the DevTools' device emulation) only do that, so both are
+   * watched and compare the current value with the one the canvases were sized for.
+   */
   #watchResolution(): void {
+    const signal = this.#abort.signal;
+    const check = () => {
+      const ratio = window.devicePixelRatio || 1;
+      if (this.#destroyed || ratio === this.#devicePixelRatio) return;
+      this.#devicePixelRatio = ratio;
+      this.#resize();
+      this.#watchResolution();
+    };
     this.#resolutionQuery = window.matchMedia(`(resolution: ${this.#devicePixelRatio}dppx)`);
-    this.#resolutionQuery.addEventListener(
-      "change",
-      () => {
-        if (this.#destroyed) return;
-        this.#devicePixelRatio = window.devicePixelRatio || 1;
-        this.#resize();
-        this.#scheduleViewSet();
-        this.#watchResolution();
-      },
-      { once: true, signal: this.#abort.signal },
-    );
+    this.#resolutionQuery.addEventListener("change", check, { once: true, signal });
+    if (!this.#watchingResize) {
+      this.#watchingResize = true;
+      window.addEventListener("resize", check, { signal });
+      // The scroller's size in device pixels changes with the ratio even when nothing else does (Chromium and Firefox report it;
+      // Safari does not know this box and throws, and then the two signals above remain).
+      try {
+        this.#devicePixelObserver = new ResizeObserver(check);
+        this.#devicePixelObserver.observe(this.#elements.scroller, { box: "device-pixel-content-box" });
+      } catch {
+        this.#devicePixelObserver = undefined;
+      }
+    }
   }
 
   #resize(): void {

@@ -8,7 +8,7 @@ import { DocumentController, type DocumentStatus, maxZoom, zoomSteps } from "./v
  * the mirror instead. React renders this frame once; DocumentController does the rest imperatively, so scrolling never re-renders React.
  */
 export function DocumentView() {
-  const scroller = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLElement>(null);
   const extent = useRef<HTMLDivElement>(null);
   const tiles = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
@@ -60,11 +60,18 @@ export function DocumentView() {
           <canvas className="document-tiles" ref={tiles} data-testid="document-tiles" />
           <canvas className="document-overlay" ref={overlay} />
         </div>
-        <div className="document-scroller" ref={scroller} data-testid="document-scroller">
+        <section
+          className="document-scroller"
+          ref={scroller}
+          data-testid="document-scroller"
+          aria-label="Pages"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users must be able to scroll the pages (WCAG 2.1.1); Firefox makes scrollers focusable anyway, this does it in every browser.
+          tabIndex={0}
+        >
           <div className="document-extent" ref={extent}>
             <div className="a11y-mirror" ref={mirror} data-testid="a11y-mirror" />
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

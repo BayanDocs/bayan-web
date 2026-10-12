@@ -98,9 +98,24 @@ export class Compositor {
     this.#overlay = overlay;
   }
 
-  /** The document's pages (view.pages): forgets every tile of the previous document or session. */
+  /**
+   * The document's pages (view.pages). The tiles of a page whose size is unchanged are kept: v0's engine sends view.pages after every
+   * view.set, and dropping them would leave the page empty until fresh tiles arrive, just when stale-tile scaling should stand in.
+   */
   setPages(pages: readonly PageInfo[]): void {
-    this.reset();
+    for (const [key, held] of this.#held) {
+      const before = this.#pages[held.spec.page];
+      const after = pages[held.spec.page];
+      if (
+        before === undefined ||
+        after === undefined ||
+        before.width !== after.width ||
+        before.height !== after.height
+      ) {
+        held.bitmap.close();
+        this.#held.delete(key);
+      }
+    }
     this.#pages = pages;
     this.#scheduleFrame(true, true);
   }
