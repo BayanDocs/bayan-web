@@ -219,9 +219,18 @@ const compositions = [
 ] as const;
 
 /** Replays the events a browser fires on the hidden text area while an input method composes, for engines Playwright cannot drive. */
-async function composeWithEvents(page: Page, steps: readonly string[], commit: string): Promise<void> {
+/**
+ * Replays on the hidden text area the events a browser fires while an input method composes. Chromium and Safari fire the last input
+ * event before compositionend; Firefox fires compositionend first, then the last input event, which is no longer composing.
+ */
+async function composeWithEvents(
+  page: Page,
+  steps: readonly string[],
+  commit: string,
+  order: "input-first" | "compositionend-first",
+): Promise<void> {
   await bridge(page).evaluate(
-    (element, [stepsJson, committed]) => {
+    (element, [stepsJson, committed, eventOrder]) => {
       const area = element as HTMLTextAreaElement;
       const start = area.selectionStart;
       let length = 0;
@@ -234,29 +243,36 @@ async function composeWithEvents(page: Page, steps: readonly string[], commit: s
           new InputEvent("input", { inputType: "insertCompositionText", data: step, isComposing: true, bubbles: true }),
         );
       }
-      // Committing replaces the composition with the committed text, as one last update, before the composition ends.
+      // Committing replaces the composition with the committed text, as one last update, and ends the composition.
       area.dispatchEvent(new CompositionEvent("compositionupdate", { data: committed ?? "", bubbles: true }));
       area.setRangeText(committed ?? "", start, start + length, "end");
-      area.dispatchEvent(
+      const end = new CompositionEvent("compositionend", { data: committed ?? "", bubbles: true });
+      const lastInput = (composing: boolean) =>
         new InputEvent("input", {
           inputType: "insertCompositionText",
           data: committed ?? "",
-          isComposing: true,
+          isComposing: composing,
           bubbles: true,
-        }),
-      );
-      area.dispatchEvent(new CompositionEvent("compositionend", { data: committed ?? "", bubbles: true }));
+        });
+      if (eventOrder === "compositionend-first") {
+        area.dispatchEvent(end);
+        area.dispatchEvent(lastInput(false));
+      } else {
+        area.dispatchEvent(lastInput(true));
+        area.dispatchEvent(end);
+      }
     },
-    [JSON.stringify(steps), commit],
+    [JSON.stringify(steps), commit, order],
   );
 }
 
-function expectedMessages(): SentInput[] {
+function expectedMessages(order: "input-first" | "compositionend-first" = "input-first"): SentInput[] {
   return compositions.flatMap(({ steps, commit }) => [
     { type: "input.composition", phase: "start", text: "" },
     ...steps.map((text) => ({ type: "input.composition", phase: "update", text })),
-    // Browsers replace the composition with the committed text, as a last update, before it ends.
-    { type: "input.composition", phase: "update", text: commit },
+    // Chromium and Safari replace the composition with the committed text, as a last update, before it ends; in Firefox's order that
+    // input event comes after the end, which already sent the committed text, so no update is sent for it.
+    ...(order === "input-first" ? [{ type: "input.composition", phase: "update", text: commit }] : []),
     { type: "input.composition", phase: "end", text: "" },
     { type: "input.text", text: commit },
   ]);
@@ -305,29 +321,34 @@ for (const bridgeKind of ["edit-context", "hidden-element"] as const) {
   });
 }
 
-test("composition events reach the engine through the hidden element (the event sequence of Firefox and Safari)", async ({
-  page,
-  browserName,
-}) => {
-  test.skip(
-    browserName === "chromium",
-    "Chromium uses EditContext; its hidden-element path is tested with real input-method emulation above",
-  );
-  await recordInput(page);
-  await openAndFocus(page);
-  await expect(page.locator(".document-view")).toHaveAttribute("data-input-bridge", "hidden-element");
-  for (const [index, { steps, commit }] of compositions.entries()) {
-    await composeWithEvents(page, steps, commit);
-    await expect
-      .poll(() => engineText(page))
-      .toBe(
-        compositions
-          .slice(0, index + 1)
-          .map((step) => step.commit)
-          .join(""),
-      );
-  }
-  expect(await sentInput(page)).toEqual(expectedMessages());
-  await waitForTiles(page);
-  expect(await pixelsOf(page, mockColours.ink)).toBeGreaterThan(0);
-});
+for (const { order, browsers } of [
+  { order: "input-first", browsers: "Chromium and Safari: the last input event, then compositionend" },
+  { order: "compositionend-first", browsers: "Firefox: compositionend, then the last input event" },
+] as const) {
+  test(`composition events reach the engine through the hidden element (the event order of ${browsers})`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      browserName === "chromium",
+      "Chromium uses EditContext; its hidden-element path is tested with real input-method emulation above",
+    );
+    await recordInput(page);
+    await openAndFocus(page);
+    await expect(page.locator(".document-view")).toHaveAttribute("data-input-bridge", "hidden-element");
+    for (const [index, { steps, commit }] of compositions.entries()) {
+      await composeWithEvents(page, steps, commit, order);
+      await expect
+        .poll(() => engineText(page))
+        .toBe(
+          compositions
+            .slice(0, index + 1)
+            .map((step) => step.commit)
+            .join(""),
+        );
+    }
+    expect(await sentInput(page)).toEqual(expectedMessages(order));
+    await waitForTiles(page);
+    expect(await pixelsOf(page, mockColours.ink)).toBeGreaterThan(0);
+  });
+}
