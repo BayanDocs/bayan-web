@@ -1,6 +1,6 @@
 # WEB-002 report: worker canvas, input bridges and accessibility mirror
 
-Work package: [WEB-002](https://github.com/BayanDocs/docs/blob/main/workpackages/phase-0/WEB-002-spike-worker-canvas.md), the validation gate of [ADR-0014](https://github.com/BayanDocs/docs/blob/main/adr/0014-web-shell.md). Engine: bayan-core `664c9992fc6626d61a3818164ada5e0ccf7d9050` (`bayan-core.pin`), CORE-007's engine skeleton and its mock document. Written 2026-10-12.
+Work package: [WEB-002](https://github.com/BayanDocs/docs/blob/main/workpackages/phase-0/WEB-002-spike-worker-canvas.md), the validation gate of [ADR-0014](https://github.com/BayanDocs/docs/blob/main/adr/0014-web-shell.md). Engine: bayan-core `e7d6f1e1da00df143f88a6a00e041fc3bc188e3f` (`bayan-core.pin`), CORE-007's engine skeleton and its mock document. The figures were measured with a build of the next commit, `664c999`, which changed nothing the engine package contains: its three runtime files are byte-identical to those of `e7d6f1e` (the pin moved back to `e7d6f1e` because `664c999` had reached bayan-core's main less than 24 hours before it was first pinned, which ADR-0017 rule 4 forbids; `scripts/engine-package.sh` now refuses such a commit). Written 2026-10-12.
 
 ## 1. Summary
 
@@ -8,7 +8,7 @@ The web shell now runs the engine the way ADR-0014 planned: bayan-core's WebAsse
 
 In plain language, what this spike shows:
 
-- **Drawing works and stays smooth** in Chromium and Firefox: scrolling and zooming run at 60 frames a second with no blank frames. Playwright's WebKit on Linux keeps up at a device-pixel ratio of 1 but not at 2 in our container, which has no graphics processor; section 5 explains why and what to do.
+- **Drawing works and stays smooth** in Chromium and Firefox on Linux: scrolling and zooming run at 60 frames a second with no blank frames. Playwright's WebKit keeps up at a device-pixel ratio of 2 on CI's Apple Silicon Mac and at a ratio of 1 on Linux, but not at 2 on Linux in our container, which has no graphics processor. CI's macOS virtual machines also gave two results that point at the machines rather than the code (Chromium at 30 frames a second on Apple Silicon, every browser slow on Intel), which the manual pass on real Macs must settle; section 5 explains and says what to do.
 - **Typing and input methods work** through both bridges. Japanese, Chinese and Korean composition reaches the engine through EditContext and through the hidden text area, in Chromium with its input-method emulation; in Firefox and WebKit the hidden text area handles the same composition events correctly. A pass with real input methods in Firefox and Safari is still to be done by hand (section 8).
 - **A real screen reader reads the document.** Orca, the Linux screen reader, read the mirror's headings, paragraphs, list and table, and followed the engine's caret while typing, in Firefox and in Chromium; the transcripts are in [WEB-002-evidence/](WEB-002-evidence/). Passes with NVDA and VoiceOver are still to be done by hand (section 9).
 - **Keystroke latency is close to PERF-04 but not there yet.** The caret appears within about 16–19 ms at p95 in Chromium and Firefox at a normal typing pace; the typed character itself within 22–35 ms. Section 6 gives the figures and the plan.
@@ -60,7 +60,7 @@ flowchart LR
 
 | | Criterion | Status | Evidence |
 |---|---|---|---|
-| AC-1 | Smooth scrolling and zooming in Chromium, Firefox and WebKit (frame-time figures) | Met in Chromium and Firefox; in WebKit met at device-pixel ratio 1, not at 2 in this container | Section 5; `tests/e2e/canvas.spec.ts`, `canvas-hidpi.spec.ts`, `measurements.spec.ts` |
+| AC-1 | Smooth scrolling and zooming in Chromium, Firefox and WebKit (frame-time figures) | Met in Chromium and Firefox on Linux; in WebKit met at device-pixel ratio 1 on Linux and at 2 on CI's Apple Silicon Mac, not at 2 on Linux without a graphics processor nor on CI's Intel Mac | Section 5; `tests/e2e/canvas.spec.ts`, `canvas-hidpi.spec.ts`, `measurements.spec.ts` |
 | AC-2 | Japanese, Chinese and Korean composition reaches the engine through EditContext (Chromium) and through the fallback (Firefox and Safari), with evidence | Met with automated evidence; real input methods in Firefox and Safari need the manual pass | Section 8; `tests/e2e/input.spec.ts` |
 | AC-3 | A screen reader reads the mirror's text in at least two browser/screen-reader combinations, with evidence | Met with Orca 46.1 + Firefox 155 and Orca 46.1 + Chromium 141; NVDA and VoiceOver passes are scripted for the owner | Section 9; [WEB-002-evidence/](WEB-002-evidence/); `tests/e2e/a11y.spec.ts` |
 | AC-4 | Keystroke-to-overlay latency reported, with a plan to meet PERF-04 if it is not met | Met: reported; PERF-04 not yet met; plan in section 6.4 | Section 6 |
@@ -73,7 +73,7 @@ flowchart LR
 - **Method:** `tests/e2e/measurements.spec.ts`, one browser at a time (`--workers 1`), against the production build served by `vite preview`, two runs; where the runs differ the table gives both. The app records User Timing measures (`src/metrics.ts`); the tests read them and the per-frame state of the compositor.
 - **Definitions:** *key → caret drawn*: from the `keydown` event to the moment the compositor drew the engine's new caret. *Key → caret frame*: to the next animation frame after that, when the browser renders it; this is the figure to compare with PERF-04's keystroke-to-pixel for the caret. *Key → character*: to the frame in which the re-rendered tile (or patch) that shows the typed character was drawn. *Steady typing*: 44 characters at one every 80 ms (about 12 a second, a fast typist). *Burst*: 40 characters as fast as Playwright sends them, far faster than anyone types, to show queuing.
 
-CI runs the same measurements on Ubuntu 24.04, macOS 15 (Apple Silicon) and macOS 26 (Intel) and keeps them as the `measurements-<runner>` artifacts of each run.
+CI runs the same measurements on Ubuntu 24.04, macOS 15 (Apple Silicon) and macOS 26 (Intel) and keeps them as the `measurements-<runner>` artifacts of each run; sections 5 and 6 give the macOS figures of one such run.
 
 ## 5. AC-1: scrolling and zooming
 
@@ -90,6 +90,19 @@ While zooming, 66–110 frames per run showed the previous scale's tiles scaled 
 
 **WebKit at a ratio of 2.** Every scroll step redraws the whole canvas (2,560 × 1,100 device pixels here) from tiles, which Playwright's WebKit on Linux does in software in this container at about 16 frames a second; at a ratio of 1 the same code runs at about 55. The figures for macOS come from CI and from the manual pass; real Safari composites on the graphics processor. Should WebKit stay slow on real Macs, the remedy is to let the browser scroll the tiles itself: put the tiles in the scrolled content as small canvases (`ImageBitmapRenderingContext.transferFromImageBitmap`, no copy), so that scrolling needs no drawing by the page at all and continues even while the main thread is busy. That changes the compositor's structure, not the protocol; it is follow-up F5.
 
+**macOS in CI.** The same measurements, once each, from GitHub's macOS virtual machines (the `measurements-macos-15` and `measurements-macos-26-intel` artifacts of [CI run 38194327872](https://github.com/BayanDocs/bayan-web/actions/runs/38194327872), on commit `c2c64dc`). WebKit runs Playwright's "Desktop Safari" profile there, at a ratio of 2; Chromium and Firefox at 1. These are shared virtual machines running Playwright's builds, not Safari or Chrome on a person's Mac, so they show tendencies rather than final values:
+
+| Machine, browser | Scroll frames p50 / p95 / p99 | Frames over 33 ms | Frames waiting for fresh tiles / with a blank page | Zoom frames p50 / p95 / p99 | Zoom: frames over 33 ms / blank |
+|---|---|---|---|---|---|
+| macOS 15 (Apple Silicon), Chromium | 33.3 / 66.7 / 66.7 | 43 of 108 | 0 / 0 | 33.3 / 66.7 / 66.7 | 54 / 0 |
+| macOS 15 (Apple Silicon), Firefox | 16.7 / 19.9 / 22.5 | 0 of 220 | 0 / 0 | 16.3 / 20.1 / 22.2 | 0 / 0 |
+| macOS 15 (Apple Silicon), WebKit, ratio 2 | 16.7 / 19.2 / 23.7 | 1 of 222 | 6 / 0 | 16.6 / 18.0 / 20.8 | 0 / 0 |
+| macOS 26 (Intel), Chromium | 16.7 / 100 / 116.7 | 18 of 134 | 0 / 0 | 16.7 / 100 / 133.3 | 22 / 0 |
+| macOS 26 (Intel), Firefox | 31.4 / 32.9 / 63.1 | 2 of 118 | 1 / 0 | 31.2 / 32.6 / 33.3 | 0 / 0 |
+| macOS 26 (Intel), WebKit, ratio 2 | 33.2 / 149.6 / 210.9 | 40 of 81 | 66 / 21 | 33.1 / 128.1 / 508.7 | 118 / 0 |
+
+On the Apple Silicon machine, WebKit at a ratio of 2 scrolled and zoomed at 60 frames a second, with no blank page, which supports the explanation above: the slowness on Linux comes from drawing in software, not from the compositor's design. Two results there are not yet explained. Playwright's Chromium headless shell presented only every second frame on the Apple Silicon machine (every interval a multiple of 16.7 ms), while Firefox and WebKit on the same machine kept 60. The Intel machine was slow for every browser, Firefox included (about 32 frames a second), and WebKit there showed a blank area in 21 frames while scrolling, the only blank frames in any measurement. Both point at the virtual machines rather than the code, since the same code ran at 60 frames a second elsewhere, but only the manual pass on real Macs (section 8.2) can settle it; should real Safari on an Intel Mac show blank areas while scrolling, F5 applies.
+
 ## 6. AC-4: keystroke latency
 
 ### 6.1 Final figures
@@ -103,6 +116,19 @@ p50 / p95 / p99 in milliseconds, two runs:
 | WebKit, ratio 1 | 1.9 / 3.0 / 7.3 | 11.5 / 17.3 / 20.4 | 28.0 / 37.7 / 39.9 | — | — |
 | WebKit, ratio 2 | 3.4–3.8 / 28.7–29.4 / 31.7–35.0 | 21.8–23.8 / 51.4–57.1 / 55–60 | 21.7–23.7 / 54–58 / 103–117 | 35.8–38.5 / 70–73 / 77–81 | 35.7–39.4 / 70–73 / 77–80 |
 
+On CI's macOS virtual machines (one run each, the artifacts named in section 5):
+
+| Machine, browser | Steady: key → caret drawn | Steady: key → caret frame | Steady: key → character | Burst: key → caret frame | Burst: key → character |
+|---|---|---|---|---|---|
+| macOS 15 (Apple Silicon), Chromium | 10.7 / 60.4 / 123.5 | 51.9 / 112.3 / 200.7 | 69.9 / 133.9 / 213.4 | 78.2 / 101.4 / 104.9 | 77.4 / 100.7 / 104.2 |
+| macOS 15 (Apple Silicon), Firefox | 2.1 / 3.6 / 4.3 | 11.6 / 19.4 / 21.9 | 13.4 / 30.1 / 39.4 | 7.8 / 14.8 / 16.4 | 7.7 / 14.7 / 16.3 |
+| macOS 15 (Apple Silicon), WebKit, ratio 2 | 1.4 / 5.4 / 5.8 | 9.4 / 19.4 / 22.0 | 9.6 / 23.2 / 35.1 | 7.0 / 17.1 / 17.7 | 7.2 / 20.6 / 28.5 |
+| macOS 26 (Intel), Chromium | 1.7 / 73.8 / 106.2 | 8.7 / 128.8 / 163.7 | 25.4 / 163.7 / 228.9 | 70.4 / 103.6 / 108.0 | 70.2 / 103.5 / 107.9 |
+| macOS 26 (Intel), Firefox | 1.3 / 4.4 / 13.9 | 19.7 / 34.5 / 48.7 | 52.2 / 68.1 / 105.0 | 25.0 / 85.9 / 99.1 | 25.5 / 85.2 / 98.5 |
+| macOS 26 (Intel), WebKit, ratio 2 | 11.7 / 50.2 / 71.5 | 31.8 / 73.2 / 129.7 | 34.4 / 105.7 / 129.6 | 42.7 / 142.0 / 164.6 | 51.2 / 159.1 / 184.3 |
+
+Firefox and WebKit on the Apple Silicon machine match the Linux figures, WebKit now at a ratio of 2 (caret frame 19.4 ms at p95, against 51–57 on Linux), and in bursts come within 1–2 ms of PERF-04 for the caret. Chromium's headless shell there and every browser on the Intel machine are slower, in line with their frame times above.
+
 The engine's own work is small: once the worker answers, the caret is drawn within 1–3 ms (*key → caret drawn*). What remains is waiting: for the next frame (up to 16.7 ms at 60 Hz), and in bursts for the worker, which handles one message at a time.
 
 ### 6.2 What the spike changed, and what it gained
@@ -115,7 +141,7 @@ The first measurements, before the three changes below, gave at p95: Chromium 18
 
 ### 6.3 Against PERF-04
 
-PERF-04 asks for keystroke-to-pixel latency of at most 16 ms at p95 and 33 ms at p99. With steady typing, **the caret meets the p99 bound in Chromium, Firefox and WebKit at ratio 1, and misses the p95 bound by 1–3 ms in Firefox, in WebKit at ratio 1 and in one of two Chromium runs; the character misses both** (p95 22–38 ms). Bursts miss in Chromium and WebKit at ratio 2. These are headless browsers on a shared machine without a graphics processor, with the mock engine's trivial layout; real hardware will be faster for drawing and the real engine slower for layout, so the figures show the shape of the costs more than final values.
+PERF-04 asks for keystroke-to-pixel latency of at most 16 ms at p95 and 33 ms at p99. With steady typing, **the caret meets the p99 bound in Chromium, Firefox and WebKit at ratio 1, and misses the p95 bound by 1–3 ms in Firefox, in WebKit at ratio 1 and in one of two Chromium runs; the character misses the p95 bound everywhere (22–38 ms) and the p99 bound everywhere but in Firefox**. Bursts miss in Chromium and WebKit at ratio 2. These are headless browsers on a shared machine without a graphics processor, with the mock engine's trivial layout; real hardware will be faster for drawing and the real engine slower for layout, so the figures show the shape of the costs more than final values.
 
 ### 6.4 Plan to meet PERF-04
 
@@ -268,6 +294,7 @@ The browser does not bind the worker's load to the bytes the app checked. A serv
 4. **Surrounding text for input methods** (`input.ime.query` in the catalog) was not needed: the editable accessibility node already carries the text and the box of every character, which EditContext's `updateCharacterBounds` uses. The real engine's editable text is a whole document, so the bridge will need a window of text around the caret; the protocol should say how large (F3).
 5. **The worker host converts every pixel** from premultiplied to straight alpha in JavaScript before creating the `ImageBitmap`; with patches this matters less, but an engine that produced straight alpha for the web, or a faster conversion, would cut tile time (F4).
 6. **The WebAssembly module contains the builder's path** to Cargo's registry (`/root/.cargo/registry/…`), so two machines with different home folders build different bytes, although two checkouts on one machine build identical ones. Remapping those paths would make the package reproducible across machines and its hash comparable with bayan-core's CI artifacts (F4).
+7. **`input.key` carries the modifiers as pressed** (`{ shift, ctrl, alt, meta }`, spec §6.5), and the UI manifest's shortcuts say "Ctrl", which the shell reads as the platform's primary modifier, Command on Apple systems (the spec does not say which). So on a Mac the shell forwards Command+B for the manifest's "Ctrl+B" with `meta` set and `ctrl` not, and the engine cannot tell it is the same shortcut without knowing the platform. Either the shell names the platform once (for example in `hello`), or `input.key` gains a `primary` flag, or the shell sends shortcuts as commands; CI's macOS runs found this, through a test that pressed Control on a Mac (F3).
 
 ## 12. Follow-ups
 
@@ -275,7 +302,7 @@ The browser does not bind the worker's load to the bytes the app checked. A serv
 |---|---|---|---|
 | F1 | Worker host: accept the module's integrity hash in `init` and fetch with it | bayan-core | S |
 | F2 | Raise integrity for workers (`new Worker()` option or `Integrity-Policy` for workers) with the standards bodies; revisit when a browser ships one | docs, owner | S |
-| F3 | Protocol additions: range replacement and deletion, clipboard exchange as bytes, a text window for input methods, narrower invalidation on `view.set` | docs spec, then bayan-core (CORE-125) | M |
+| F3 | Protocol additions: range replacement and deletion, clipboard exchange as bytes, a text window for input methods, narrower invalidation on `view.set`, the platform's primary shortcut modifier | docs spec, then bayan-core (CORE-125) | M |
 | F4 | Engine package: straight-alpha or faster tile conversion; reproducible module across machines | bayan-core | S |
 | F5 | Compositor: let the browser scroll the tiles (tile canvases in the scrolled content) if WebKit or Safari stays below 60 frames a second at ratio 2 on real hardware | bayan-web, WEB-101 | M |
 | F6 | Input: coalesce typed text while an `input.text` is unanswered; keep tile work behind input | bayan-web, WEB-101 | S |
