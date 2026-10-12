@@ -7,9 +7,10 @@
 #     one commit each, which GitHub writes when it merges them, so such a commit's committer date is when its code reached main; a
 #     commit merged into main from elsewhere keeps an earlier date and is refused;
 #   - a commit that reached main less than 24 hours ago, or less than 24 hours before the bayan-web commit that pinned it: the last
-#     commit that changed bayan-core.pin, at the earlier of its author and committer times, because amending or rebasing a commit gives
-#     it a new committer time (as bayan-core's own age check does, xtask/src/supply_chain/git.rs). While the change to bayan-core.pin is
-#     not committed, the pin time is now.
+#     commit that added the line `commit=<that commit>` to bayan-core.pin (a later change to the file's comments does not count), at
+#     the earlier of its author and committer times, because amending or rebasing a commit gives it a new committer time (as
+#     bayan-core's own age check does, xtask/src/supply_chain/git.rs). While bayan-core.pin has changes that are not committed, or no
+#     commit added that line, the pin time is now.
 #
 # It needs no network: the caller fetches bayan-core's main branch into <main-ref> first.
 #
@@ -48,9 +49,12 @@ merged_at="$committed"
 [ "$authored" -le "$committed" ] || merged_at="$authored"
 
 now="$(date +%s)"
+# When the pin was made: the last commit that added this commit's line to bayan-core.pin (-S finds the commits that change how often a
+# text occurs in the file, so a commit that only rewords the comments is not one of them), or now while bayan-core.pin has changes that
+# are not committed or no commit added the line.
 pinned_at="$now"
 if git -C "$web" diff --quiet HEAD -- bayan-core.pin; then
-  times="$(git -C "$web" log -1 --format='%at %ct' -- bayan-core.pin)"
+  times="$(git -C "$web" log -1 --format='%at %ct' -S "commit=$commit" -- bayan-core.pin)"
   if [ -n "$times" ]; then
     read -r authored committed <<EOF
 $times

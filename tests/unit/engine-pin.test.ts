@@ -65,15 +65,20 @@ function core(hoursAgo: number): { dir: string; merged: string } {
   return { dir, merged };
 }
 
-/** bayan-web, with the pin committed at `pinned`, or changed and not committed yet. */
-function web(pinned: Times | "uncommitted"): string {
+/**
+ * bayan-web, pinning `pinnedCommit` in a commit at `pinned`, or in a change not committed yet; with `reworded`, a later commit at that
+ * time changes only the file's comment.
+ */
+function web(pinnedCommit: string, pinned: Times | "uncommitted", reworded?: Times): string {
   const dir = repository();
   commit(dir, "README.md", "bayan-web\n", at(500));
+  const line = `commit=${pinnedCommit}\n`;
   if (pinned === "uncommitted") {
-    commit(dir, "bayan-core.pin", "commit=0\n", at(450));
-    writeFileSync(join(dir, "bayan-core.pin"), "commit=1\n");
+    commit(dir, "bayan-core.pin", `commit=${"0".repeat(40)}\n`, at(450));
+    writeFileSync(join(dir, "bayan-core.pin"), line);
   } else {
-    commit(dir, "bayan-core.pin", "commit=1\n", pinned);
+    commit(dir, "bayan-core.pin", `# The pinned commit.\n${line}`, pinned);
+    if (reworded) commit(dir, "bayan-core.pin", `# The bayan-core commit that bayan-web builds.\n${line}`, reworded);
   }
   return dir;
 }
@@ -93,14 +98,14 @@ afterEach(() => {
 describe("check-engine-pin.sh", () => {
   it("accepts a commit of main merged more than 24 hours before it was pinned", () => {
     const { dir, merged } = core(100);
-    const result = check(dir, merged, web(at(48)));
+    const result = check(dir, merged, web(merged, at(48)));
     expect(result.output).toContain("merged at least 24 hours before it was pinned");
     expect(result.ok).toBe(true);
   });
 
   it("refuses a shallow clone of bayan-web, which lacks the commit that pinned the engine", () => {
     const { dir, merged } = core(100);
-    const full = web(at(48));
+    const full = web(merged, at(48));
     const shallow = mkdtempSync(join(tmpdir(), "engine-pin-shallow-"));
     folders.push(shallow);
     execFileSync("git", ["clone", "--quiet", "--depth", "1", `file://${full}`, shallow], { env: gitEnv });
@@ -111,14 +116,22 @@ describe("check-engine-pin.sh", () => {
 
   it("refuses a commit that reached main less than 24 hours ago", () => {
     const { dir, merged } = core(10);
-    const result = check(dir, merged, web("uncommitted"));
+    const result = check(dir, merged, web(merged, "uncommitted"));
     expect(result.ok).toBe(false);
     expect(result.output).toContain("less than 24 hours ago");
   });
 
   it("refuses a commit pinned less than 24 hours after it reached main, however long ago that was", () => {
     const { dir, merged } = core(40);
-    const result = check(dir, merged, web(at(30)));
+    const result = check(dir, merged, web(merged, at(30)));
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain("pinned less than 24 hours after");
+  });
+
+  it("takes the pin time from the commit that added the pinned line, not from a later change to the file's comments", () => {
+    const { dir, merged } = core(40);
+    // Pinned 10 hours after the merge; an hour ago a commit only reworded the comment above the line.
+    const result = check(dir, merged, web(merged, at(30), at(1)));
     expect(result.ok).toBe(false);
     expect(result.output).toContain("pinned less than 24 hours after");
   });
@@ -126,7 +139,7 @@ describe("check-engine-pin.sh", () => {
   it("takes the earlier of the pin commit's author and committer times, which amending or rebasing cannot move", () => {
     const { dir, merged } = core(100);
     // Written 5 hours after the merge, amended 98 hours later: the pin was still made too early.
-    const result = check(dir, merged, web({ author: now - 95 * hour, committer: now - 2 * hour }));
+    const result = check(dir, merged, web(merged, { author: now - 95 * hour, committer: now - 2 * hour }));
     expect(result.ok).toBe(false);
     expect(result.output).toContain("pinned less than 24 hours after");
   });
@@ -139,7 +152,7 @@ describe("check-engine-pin.sh", () => {
     git(dir, ["checkout", "--quiet", "main"]);
     commit(dir, "main.rs", "fn main() {}\n", at(250));
     git(dir, ["merge", "--quiet", "--no-ff", "--no-edit", "side"], at(200));
-    const result = check(dir, side, web(at(48)));
+    const result = check(dir, side, web(side, at(48)));
     expect(result.ok).toBe(false);
     expect(result.output).toContain("not one of the commits of bayan-core's main branch");
   });
