@@ -119,8 +119,13 @@ export class AccessibilityMirror {
       }
       case "list_item":
         return document.createElement("li");
-      case "table":
-        return document.createElement("table");
+      case "table": {
+        // An explicit role, because Firefox's heuristics otherwise take a table it cannot see for a layout table: Orca then neither
+        // counts it nor finds it with its table navigation (WEB-002 report).
+        const element = document.createElement("table");
+        element.setAttribute("role", "table");
+        return element;
+      }
       case "row":
         return document.createElement("tr");
       case "column_header": {

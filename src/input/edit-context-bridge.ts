@@ -38,6 +38,11 @@ export class EditContextBridge implements InputBridge {
     element.setAttribute("role", "textbox");
     element.setAttribute("aria-multiline", "true");
     element.tabIndex = 0;
+    // The engine does proofing (ADR-0022): no browser spell checking, which in Chrome can send the text to a web service, and no
+    // autocorrection or capitalization by the browser or the system's keyboard.
+    element.spellcheck = false;
+    element.setAttribute("autocorrect", "off");
+    element.setAttribute("autocapitalize", "off");
     element.dataset["bridge"] = this.kind;
     this.#text = document.createTextNode("");
     element.append(this.#text);

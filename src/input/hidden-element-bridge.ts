@@ -45,6 +45,8 @@ export class HiddenElementBridge implements InputBridge {
     element.className = "input-bridge";
     element.rows = 1;
     element.wrap = "off";
+    // The engine does proofing (ADR-0022): no browser spell checking, which in Chrome can send the text to a web service, and no
+    // autocompletion, autocorrection or capitalization by the browser or the system's keyboard.
     element.spellcheck = false;
     element.autocomplete = "off";
     element.setAttribute("autocorrect", "off");

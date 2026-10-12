@@ -391,7 +391,9 @@ export class DocumentController {
 
   #pointer(event: PointerEvent, kind: "down" | "up" | "cancel"): void {
     if (!this.#onContent(event) || this.#client === undefined || this.#docId === null) return;
-    if (kind === "down") this.#bridge.focus();
+    // Focus moves to the editable text when the button is released, as a native text field's would be by then: Orca in Chromium stays
+    // in browse mode when focus moves on press, and would then take the user's typing as its own commands (WEB-002 report).
+    if (kind === "up") this.#bridge.focus();
     const box = this.#elements.scroller.getBoundingClientRect();
     const position = pointerToView(this.#transform(), event.clientX - box.left, event.clientY - box.top);
     const pointerType = event.pointerType === "mouse" || event.pointerType === "pen" || event.pointerType === "touch";

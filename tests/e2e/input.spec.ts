@@ -112,6 +112,8 @@ test("typing, deleting and moving the caret reach the engine, and the bridge fol
   const problems = await collectProblems(page);
   await recordInput(page);
   await openAndFocus(page);
+  // The engine does proofing (ADR-0022): the browser's spell checker, which can send text to a web service, stays off.
+  await expect(bridge(page)).toHaveAttribute("spellcheck", "false");
   await page.keyboard.type("abc");
   await expect.poll(() => engineText(page)).toBe("abc");
   await page.keyboard.press("Backspace");
