@@ -279,6 +279,9 @@ export class Compositor {
     const scale = viewScale(transform.zoom, transform.devicePixelRatio);
     const canvas = this.#options.tiles;
     const placed = visiblePages(this.#pages, transform, canvas.width, canvas.height);
+    // Request and release tiles before drawing, so that no frame draws a stand-in that the same frame lets go of: the state the
+    // compositor reports (data-tiles-missing and the others) then always describes what the canvas shows.
+    if (this.#pump(transform, scale)) this.#tilesDirty = true;
     const drewTiles = this.#tilesDirty;
     const drewOverlay = this.#overlayDirty;
     if (this.#tilesDirty) {
@@ -291,7 +294,6 @@ export class Compositor {
     }
     const arrived = this.#arrived;
     this.#arrived = [];
-    this.#pump(transform, scale);
     this.#options.onFrame?.({ time, drewTiles, drewOverlay, arrived });
   }
 
@@ -373,8 +375,11 @@ export class Compositor {
     };
   }
 
-  /** Requests the visible tiles that are missing or stale, nearest first, and lets go of tiles beyond the memory budget. */
-  #pump(transform: ViewTransform, scale: number): void {
+  /**
+   * Requests the visible tiles that are missing or stale, nearest first, and lets go of tiles beyond the memory budget. Returns whether
+   * it let go of stand-in tiles that the canvas may still show.
+   */
+  #pump(transform: ViewTransform, scale: number): boolean {
     const canvas = this.#options.tiles;
     const placed = visiblePages(this.#pages, transform, canvas.width, canvas.height, PREFETCH_PIXELS);
     const wanted = placed.flatMap((page) => visibleTiles(page, scale, canvas.width, canvas.height, PREFETCH_PIXELS));
@@ -389,16 +394,14 @@ export class Compositor {
     }
     // Once the current scale covers the visible part of a page, the stand-in tiles of other scales are no longer needed.
     const current = scaleKey(scale);
+    let released = false;
     if (missing === 0) {
-      let released = false;
       for (const [key, held] of this.#held) {
         if (held.spec.scaleKey !== current && placed.some((page) => page.page.index === held.spec.page)) {
           this.#release(key, held);
           released = true;
         }
       }
-      // Draw again without them: a stand-in scaled to a fractional size can reach a pixel past the fresh tiles at a page's edge.
-      if (released) this.#scheduleFrame(true, false);
     }
     // For measurements: tiles in view (without the prefetch margin) that are not yet fresh at the current scale; while there are any,
     // the view shows stale or scaled stand-ins.
@@ -414,6 +417,8 @@ export class Compositor {
     data["tilesInFlight"] = String(this.#inFlight.size);
     data["tilesMissing"] = String(missing);
     data["tilesVisibleMissing"] = String(visibleMissing);
+    // Draw without them: a stand-in scaled to a fractional size can reach a pixel past the fresh tiles at a page's edge.
+    return released;
   }
 
   /**
