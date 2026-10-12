@@ -5,7 +5,7 @@
 export const measureNames = {
   /** From starting the engine (before the integrity check) to the worker host's "ready". */
   engineStart: "bayan:engine-start",
-  /** Of the integrity check alone (fetching and hashing the engine's three files). */
+  /** Of the integrity check (fetching and hashing the engine's three files) and starting the worker. */
   engineVerify: "bayan:engine-verify",
   /** From a key press to the frame in which the compositor drew the overlay (caret) that the engine sent for it. */
   keyToOverlayDrawn: "bayan:key-to-overlay-drawn",
