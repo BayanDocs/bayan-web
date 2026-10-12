@@ -1,9 +1,12 @@
 import { defineConfig } from "vite";
+import { bayanEngine } from "./config/engine-plugin.ts";
 import { devHeaders, productionHeaders } from "./config/security-headers.ts";
 
 // Vite compiles TypeScript and JSX itself (with Oxc), so no React plugin is needed.
 // The React plugin's only extra is Fast Refresh, which needs an inline script that our Content Security Policy forbids.
 export default defineConfig({
+  // The engine's WebAssembly package, served unchanged next to the app (WEB-002, config/engine-plugin.ts).
+  plugins: [bayanEngine({ devHeaders })],
   oxc: {
     jsx: { runtime: "automatic" },
   },

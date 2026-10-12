@@ -1,0 +1,7 @@
+# The bayan-core commit whose WebAssembly engine package bayan-web builds and serves (work package WEB-002).
+# During Phase 0, before bayan-core publishes releases, the shells build core from a pinned commit (ADR-0002 §4); from the first
+# release on, the web app consumes the published package instead, pinned exactly.
+# scripts/engine-package.sh builds engine-package/ from this commit and refuses any commit that is not on bayan-core's main branch,
+# so only reviewed and merged engine code reaches the app. `pnpm verify` fails if engine-package/ was built from another commit.
+# Change it like a dependency: in its own pull request, saying what changed in bayan-core between the two commits.
+commit=664c9992fc6626d61a3818164ada5e0ccf7d9050

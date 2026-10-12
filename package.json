@@ -17,13 +17,14 @@
     "preview": "vite preview",
     "check:policy": "node scripts/check-policy.ts",
     "check:lockfile": "node scripts/check-lockfile-integrity.ts",
+    "check:engine": "node scripts/check-engine.ts",
     "lint": "biome ci .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.app.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "audit": "node scripts/audit.ts",
-    "verify": "pnpm run check:policy && pnpm run check:lockfile && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:e2e && pnpm run audit"
+    "verify": "pnpm run check:policy && pnpm run check:lockfile && pnpm run check:engine && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:e2e && pnpm run audit"
   },
   "dependencies": {
     "react": "19.3.0",
