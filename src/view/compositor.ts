@@ -1,19 +1,25 @@
 // The tile compositor (ADR-0014 §4, ADR-0011 §5): draws the engine's tiles, transferred from the worker as ImageBitmaps, onto a Canvas 2D
 // that covers the visible part of the document, and draws the overlays (caret and selection) on a second canvas above it, so that a
 // blinking caret or a moved selection never redraws the tiles. It runs on the main thread and never waits for the engine: it draws what it
-// has on every frame that needs it, requests the tiles it lacks (a few at a time, so that input messages never queue behind a flood of
-// tile requests in the worker), and keeps drawing old tiles, scaled, until new ones arrive.
+// has on every frame that needs it, requests the tiles it lacks (one at a time, so that input messages never queue behind a flood of
+// tile requests in the worker), and keeps drawing old tiles, scaled, until new ones arrive. When the engine invalidates part of a tile it
+// has, it asks for just that part (a patch) and draws it over the tile, instead of rendering the whole tile again: typing changes a strip
+// a few dozen pixels tall, and re-rendering two 512-pixel tiles for each key press was the largest cost in WEB-002's latency figures.
 
 import { BLU_PER_DIP, type OverlayUpdate, type PageInfo, type PageRect, type Rect } from "../engine/protocol.ts";
 import {
   type DrawTile,
   drawOrder,
   type HeldTile,
+  intersection,
   intersects,
   type PlacedPage,
+  patchFor,
   scaleKey,
+  type TilePatch,
   type TileSpec,
   toCanvas,
+  union,
   type ViewTransform,
   viewScale,
   visiblePages,
@@ -32,27 +38,53 @@ export interface FrameReport {
   readonly time: number;
   readonly drewTiles: boolean;
   readonly drewOverlay: boolean;
-  /** Tiles that arrived since the last frame and were drawn in this one. */
-  readonly arrived: readonly TileSpec[];
+  /** The parts of pages whose fresh pixels (tiles or patches) arrived since the last frame and were drawn in this one. */
+  readonly arrived: readonly PageRect[];
 }
 
 export interface CompositorOptions {
   readonly tiles: HTMLCanvasElement;
   readonly overlay: HTMLCanvasElement;
-  readonly requestTile: (spec: TileSpec) => Promise<TileImage>;
+  /** Renders a tile, or only a patch of it when `patch` is given. */
+  readonly requestTile: (spec: TileSpec, patch?: TilePatch) => Promise<TileImage>;
   readonly onFrame?: (report: FrameReport) => void;
   /** Whether the caret may blink; false when the user prefers reduced motion. */
   readonly blink?: boolean;
 }
 
+/** A re-rendered part of a held tile, drawn over it. */
+interface Patch {
+  readonly bitmap: ImageBitmap;
+  readonly place: TilePatch;
+}
+
 interface Held extends HeldTile {
   readonly bitmap: ImageBitmap;
-  readonly bytes: number;
+  /** Re-rendered parts, drawn over the tile in order. */
+  readonly patches: Patch[];
+  /** The part of the tile (page BLU) invalidated since its pixels were last requested; null when there is none. */
+  dirty: Rect | null;
+  /** Whether the pixels are not yet those of the latest invalidation: something is dirty, or a request for it is under way. */
+  stale: boolean;
+  bytes: number;
   lastUsed: number;
 }
 
-/** At most this many tile requests wait in the worker at once. */
-const MAX_IN_FLIGHT = 2;
+/** A tile request waiting in the worker: the tile, the tile's invalidation count when it was sent, and the patch if it is one. */
+interface Flying {
+  readonly spec: TileSpec;
+  readonly version: number;
+  readonly patch?: TilePatch;
+}
+
+/**
+ * At most this many tile requests wait in the worker at once. The worker handles messages in order, so a key press waits behind every
+ * tile request already queued; one keeps that wait to a single tile's rendering (WEB-002's measurements).
+ */
+const MAX_IN_FLIGHT = 1;
+/** A tile is rendered whole again instead of patched when the patch would cover more than this share of it, or after this many patches. */
+const PATCH_SHARE = 0.5;
+const MAX_PATCHES = 16;
 /** Tiles just outside the view are requested too, this many device pixels around it, so that slow scrolling finds them ready. */
 const PREFETCH_PIXELS = 256;
 /** The memory the held tiles may take, in bytes of RGBA pixels. */
@@ -77,14 +109,14 @@ export class Compositor {
   readonly #held = new Map<string, Held>();
   /** The invalidation count of each tile: a reply rendered before the latest invalidation of its tile is stale on arrival. */
   readonly #versions = new Map<string, number>();
-  readonly #inFlight = new Map<string, { spec: TileSpec; version: number }>();
+  readonly #inFlight = new Map<string, Flying>();
   /** Increases whenever the document or session changes, so that replies to older requests are dropped. */
   #generation = 0;
   #frame = 0;
   #frameRequested = false;
   #tilesDirty = true;
   #overlayDirty = true;
-  #arrived: TileSpec[] = [];
+  #arrived: PageRect[] = [];
   #destroyed = false;
 
   constructor(options: CompositorOptions) {
@@ -112,8 +144,7 @@ export class Compositor {
         before.width !== after.width ||
         before.height !== after.height
       ) {
-        held.bitmap.close();
-        this.#held.delete(key);
+        this.#release(key, held);
       }
     }
     this.#pages = pages;
@@ -123,8 +154,7 @@ export class Compositor {
   /** Forgets every tile and request, for a new session or document. */
   reset(): void {
     this.#generation += 1;
-    for (const held of this.#held.values()) held.bitmap.close();
-    this.#held.clear();
+    for (const [key, held] of this.#held) this.#release(key, held);
     this.#versions.clear();
     this.#inFlight.clear();
     this.#pages = [];
@@ -151,30 +181,42 @@ export class Compositor {
     this.#scheduleFrame(true, true);
   }
 
-  /** render.invalidate: the tiles that intersect these regions are re-requested, and drawn as they are until the new ones arrive. */
+  /**
+   * render.invalidate: the parts of the held tiles inside these regions are requested again (as patches, or whole), and the tiles are
+   * drawn as they are until the new pixels arrive, so an edit never makes the page flicker.
+   */
   invalidate(regions: readonly PageRect[]): void {
-    const hits = (spec: TileSpec) =>
-      regions.some((region) => region.page === spec.page && intersects(region.rect, spec.rect));
-    for (const held of this.#held.values()) {
-      if (hits(held.spec)) {
-        this.#versions.set(held.spec.key, (this.#versions.get(held.spec.key) ?? 0) + 1);
-        this.#held.set(held.spec.key, { ...held, stale: true });
+    for (const region of regions) {
+      for (const held of this.#held.values()) {
+        const part = region.page === held.spec.page ? intersection(region.rect, held.spec.rect) : null;
+        if (part === null) continue;
+        held.dirty = union(held.dirty, part);
+        held.stale = true;
       }
-    }
-    for (const { spec } of this.#inFlight.values()) {
-      if (hits(spec) && !this.#held.has(spec.key)) {
-        this.#versions.set(spec.key, (this.#versions.get(spec.key) ?? 0) + 1);
+      for (const { spec } of this.#inFlight.values()) {
+        if (region.page === spec.page && intersects(region.rect, spec.rect) && !this.#held.has(spec.key)) {
+          this.#versions.set(spec.key, (this.#versions.get(spec.key) ?? 0) + 1);
+        }
       }
     }
     this.#scheduleFrame(false, false);
   }
 
-  /** overlay.update: the caret and selection to draw over the tiles. */
+  /**
+   * overlay.update: the caret and selection to draw over the tiles. They are drawn at once, not in the next animation frame: the browser
+   * presents a canvas change with its next frame either way, and waiting for requestAnimationFrame would add up to a whole frame to
+   * the keystroke-to-caret latency (WEB-002 measured it; requirement PERF-04).
+   */
   setOverlay(overlay: OverlayUpdate): void {
     this.#overlayState = overlay;
     this.#caretOn = true;
     this.#restartBlink();
-    this.#scheduleFrame(false, true);
+    if (this.#transform === undefined || this.#destroyed) {
+      this.#scheduleFrame(false, true);
+      return;
+    }
+    this.#drawOverlay();
+    this.#options.onFrame?.({ time: performance.now(), drewTiles: false, drewOverlay: true, arrived: [] });
   }
 
   /** The caret shows only while the document has keyboard focus. */
@@ -259,19 +301,35 @@ export class Compositor {
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.imageSmoothingEnabled = true;
     const held = [...this.#held.values()];
+    let placeholders = 0;
     for (const page of placed) {
       const order = drawOrder(page, scale, held);
       if (order.length === 0) {
         const size = this.#deviceBox(page.page, { x: 0, y: 0, width: page.page.width, height: page.page.height });
         context.fillStyle = PLACEHOLDER;
         context.fillRect(size.x, size.y, size.width, size.height);
+        placeholders += 1;
         continue;
       }
       for (const draw of order as DrawTile<Held>[]) {
-        draw.tile.lastUsed = this.#frame;
-        context.drawImage(draw.tile.bitmap, draw.x, draw.y, draw.width, draw.height);
+        const tile = draw.tile;
+        tile.lastUsed = this.#frame;
+        context.drawImage(tile.bitmap, draw.x, draw.y, draw.width, draw.height);
+        const scaleX = draw.width / tile.spec.width;
+        const scaleY = draw.height / tile.spec.height;
+        for (const { bitmap, place } of tile.patches) {
+          context.drawImage(
+            bitmap,
+            draw.x + place.x * scaleX,
+            draw.y + place.y * scaleY,
+            place.width * scaleX,
+            place.height * scaleY,
+          );
+        }
       }
     }
+    // For measurements: visible pages that had no tile at all and showed a placeholder in this frame.
+    canvas.dataset["placeholderPages"] = String(placeholders);
   }
 
   #drawOverlay(): void {
@@ -323,26 +381,31 @@ export class Compositor {
     let missing = 0;
     for (const spec of wanted) {
       const held = this.#held.get(spec.key);
-      if (held !== undefined && !held.stale) {
-        held.lastUsed = this.#frame;
-        continue;
-      }
+      if (held !== undefined) held.lastUsed = this.#frame;
+      if (held !== undefined && !held.stale) continue;
       missing += 1;
-      const version = this.#versions.get(spec.key) ?? 0;
-      const flying = this.#inFlight.get(spec.key);
-      if (flying !== undefined || this.#inFlight.size >= MAX_IN_FLIGHT) continue;
-      this.#request(spec, version);
+      if (this.#inFlight.has(spec.key) || this.#inFlight.size >= MAX_IN_FLIGHT) continue;
+      this.#request(spec, held);
     }
     // Once the current scale covers the visible part of a page, the stand-in tiles of other scales are no longer needed.
     const current = scaleKey(scale);
     if (missing === 0) {
+      let released = false;
       for (const [key, held] of this.#held) {
         if (held.spec.scaleKey !== current && placed.some((page) => page.page.index === held.spec.page)) {
-          held.bitmap.close();
-          this.#held.delete(key);
+          this.#release(key, held);
+          released = true;
         }
       }
+      // Draw again without them: a stand-in scaled to a fractional size can reach a pixel past the fresh tiles at a page's edge.
+      if (released) this.#scheduleFrame(true, false);
     }
+    // For measurements: tiles in view (without the prefetch margin) that are not yet fresh at the current scale; while there are any,
+    // the view shows stale or scaled stand-ins.
+    const inView = visiblePages(this.#pages, transform, canvas.width, canvas.height).flatMap((page) =>
+      visibleTiles(page, scale, canvas.width, canvas.height),
+    );
+    const visibleMissing = inView.filter((spec) => this.#held.get(spec.key)?.stale !== false).length;
     this.#evict(new Set(wanted.map((spec) => spec.key)));
     const bytes = [...this.#held.values()].reduce((sum, held) => sum + held.bytes, 0);
     const data = this.#options.tiles.dataset;
@@ -350,35 +413,89 @@ export class Compositor {
     data["tileBytes"] = String(bytes);
     data["tilesInFlight"] = String(this.#inFlight.size);
     data["tilesMissing"] = String(missing);
+    data["tilesVisibleMissing"] = String(visibleMissing);
   }
 
-  #request(spec: TileSpec, version: number): void {
+  /**
+   * Requests what a wanted tile needs: the whole tile if it is not held (or its dirty part is large, or it has many patches already),
+   * otherwise a patch of its dirty part.
+   */
+  #request(spec: TileSpec, held: Held | undefined): void {
+    const version = this.#versions.get(spec.key) ?? 0;
+    if (held === undefined || held.dirty === null) {
+      this.#send({ spec, version });
+      return;
+    }
+    const patch = patchFor(spec, held.dirty);
+    held.dirty = null;
+    if (patch === null) {
+      held.stale = false;
+      return;
+    }
+    const large = patch.width * patch.height > PATCH_SHARE * spec.width * spec.height;
+    this.#send(large || held.patches.length >= MAX_PATCHES ? { spec, version } : { spec, version, patch });
+  }
+
+  #send(flying: Flying): void {
+    const { spec, patch } = flying;
     const generation = this.#generation;
-    this.#inFlight.set(spec.key, { spec, version });
-    this.#options.requestTile(spec).then(
+    this.#inFlight.set(spec.key, flying);
+    this.#options.requestTile(spec, patch).then(
       (image) => {
         if (generation !== this.#generation || this.#destroyed) {
           image.bitmap.close();
           return;
         }
         this.#inFlight.delete(spec.key);
-        this.#held.get(spec.key)?.bitmap.close();
-        const stale = version < (this.#versions.get(spec.key) ?? 0);
-        this.#held.set(spec.key, {
-          spec,
-          stale,
-          bitmap: image.bitmap,
-          bytes: spec.width * spec.height * 4,
-          lastUsed: this.#frame,
-        });
-        this.#arrived.push(spec);
+        if (patch === undefined) {
+          this.#receiveTile(flying, image.bitmap);
+        } else {
+          this.#receivePatch(spec, patch, image.bitmap);
+        }
         this.#scheduleFrame(true, false);
       },
       () => {
-        // The engine refused or stopped; the controller learns why from the client. Try again on a later frame only if still current.
+        // The engine refused or stopped; the controller learns why from the client. A later frame asks again if still current.
         if (generation === this.#generation) this.#inFlight.delete(spec.key);
       },
     );
+  }
+
+  #receiveTile({ spec, version }: Flying, bitmap: ImageBitmap): void {
+    const previous = this.#held.get(spec.key);
+    // Invalidations that came while the tile was being rendered: those of a held tile are in its dirty part; those of a tile not yet
+    // held only raised its count, and then the whole tile is dirty.
+    const dirty = previous?.dirty ?? (version < (this.#versions.get(spec.key) ?? 0) ? spec.rect : null);
+    if (previous !== undefined) this.#release(spec.key, previous);
+    this.#held.set(spec.key, {
+      spec,
+      bitmap,
+      patches: [],
+      dirty,
+      stale: dirty !== null,
+      bytes: spec.width * spec.height * 4,
+      lastUsed: this.#frame,
+    });
+    this.#arrived.push({ page: spec.page, rect: spec.rect });
+  }
+
+  #receivePatch(spec: TileSpec, place: TilePatch, bitmap: ImageBitmap): void {
+    const held = this.#held.get(spec.key);
+    if (held === undefined) {
+      bitmap.close();
+      return;
+    }
+    held.patches.push({ bitmap, place });
+    held.bytes += place.width * place.height * 4;
+    held.stale = held.dirty !== null;
+    this.#arrived.push({ page: spec.page, rect: place.rect });
+  }
+
+  /** Lets go of a held tile and its patches. */
+  #release(key: string, held: Held): void {
+    held.bitmap.close();
+    for (const patch of held.patches) patch.bitmap.close();
+    this.#held.delete(key);
   }
 
   /** Lets go of the least recently drawn tiles that are not wanted now, until the held tiles fit the memory budget. */
@@ -390,8 +507,7 @@ export class Compositor {
       .sort((a, b) => a.lastUsed - b.lastUsed);
     for (const held of candidates) {
       if (bytes <= MEMORY_BUDGET) break;
-      held.bitmap.close();
-      this.#held.delete(held.spec.key);
+      this.#release(held.spec.key, held);
       bytes -= held.bytes;
     }
   }

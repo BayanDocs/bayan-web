@@ -22,6 +22,7 @@ import {
   intersects,
   pageAreaSize,
   pointerToView,
+  type TilePatch,
   type TileSpec,
   type ViewTransform,
 } from "./tiles.ts";
@@ -96,7 +97,7 @@ export class DocumentController {
     this.#compositor = new Compositor({
       tiles: elements.tiles,
       overlay: elements.overlay,
-      requestTile: (spec) => this.#requestTile(spec),
+      requestTile: (spec, patch) => this.#requestTile(spec, patch),
       onFrame: (report) => this.#frame(report),
       blink: !reducedMotion,
     });
@@ -148,9 +149,10 @@ export class DocumentController {
     });
     client.on("overlay.update", (payload) => {
       if (payload.doc_id !== this.#docId) return;
-      this.#compositor.setOverlay(payload);
+      // Mark the probe first: the compositor draws the overlay at once and reports it in the same call.
       const probe = this.#probes.findLast((candidate) => candidate.replied && !candidate.overlay);
       if (probe !== undefined) probe.overlay = true;
+      this.#compositor.setOverlay(payload);
     });
     client.on("a11y.update", (payload) => {
       if (payload.doc_id === this.#docId) this.#mirror.update(payload);
@@ -365,15 +367,15 @@ export class DocumentController {
     }
   }
 
-  #requestTile(spec: TileSpec): Promise<{ bitmap: ImageBitmap; hash: string }> {
+  #requestTile(spec: TileSpec, patch?: TilePatch): Promise<{ bitmap: ImageBitmap; hash: string }> {
     const client = this.#client;
     if (client === undefined || this.#docId === null) return Promise.reject(new Error("no document"));
     return client.request("render.tile", {
       doc_id: this.#docId,
       page: spec.page,
-      rect: spec.rect,
-      width: spec.width,
-      height: spec.height,
+      rect: patch?.rect ?? spec.rect,
+      width: patch?.width ?? spec.width,
+      height: patch?.height ?? spec.height,
       zoom: this.#zoom,
       device_scale: Math.min(16, this.#devicePixelRatio),
       mode: "interactive",
@@ -472,7 +474,8 @@ export class DocumentController {
       if (report.drewOverlay && probe.overlay && !probe.overlayDrawn) {
         probe.overlayDrawn = true;
         recordDuration(measureNames.keyToOverlayDrawn, probe.start, drawnAt);
-        requestAnimationFrame((next) => recordDuration(measureNames.keyToOverlayFrame, probe.start, next));
+        // The time inside the next frame's callback, not its timestamp (the frame's start, which can precede the key press).
+        requestAnimationFrame(() => recordDuration(measureNames.keyToOverlayFrame, probe.start, performance.now()));
       }
       const showsChange = report.arrived.some((tile) =>
         probe.invalidated.some((region) => region.page === tile.page && intersects(region.rect, tile.rect)),

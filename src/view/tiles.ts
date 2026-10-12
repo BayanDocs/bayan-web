@@ -270,3 +270,66 @@ export function drawOrder<T extends HeldTile>(placed: PlacedPage, scale: number,
     })),
   ];
 }
+
+/** The intersection of two rectangles, or null if they do not overlap. */
+export function intersection(a: Rect, b: Rect): Rect | null {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+}
+
+/** The smallest rectangle that contains both. */
+export function union(a: Rect | null, b: Rect): Rect {
+  if (a === null) return b;
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y,
+  };
+}
+
+/** A part of a tile to render again: whole device pixels of the tile, and the part of the page they show. */
+export interface TilePatch {
+  /** The patch's position and size in device pixels, from the tile's top-left corner. */
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  /** The part of the page it shows, in page BLU. */
+  readonly rect: Rect;
+}
+
+/**
+ * The patch of a tile that covers `dirty` (page BLU): the tile's whole device pixels that the rectangle touches, with their rectangle in
+ * BLU derived from the page's pixel grid exactly as tileSpec derives a tile's edges. So a patch is the same picture as that part of a
+ * whole re-rendered tile: exactly at scales where a device pixel is a whole number of BLU, and within one rounding step of the engine's
+ * coverage arithmetic otherwise. Null if `dirty` misses the tile.
+ */
+export function patchFor(tile: TileSpec, dirty: Rect): TilePatch | null {
+  const factor = tile.scale / BLU_PER_DIP;
+  const left = Math.max(0, Math.floor(dirty.x * factor) - tile.offsetX);
+  const top = Math.max(0, Math.floor(dirty.y * factor) - tile.offsetY);
+  const right = Math.min(tile.width, Math.ceil((dirty.x + dirty.width) * factor) - tile.offsetX);
+  const bottom = Math.min(tile.height, Math.ceil((dirty.y + dirty.height) * factor) - tile.offsetY);
+  if (right <= left || bottom <= top) return null;
+  const blu = (pixel: number) => Math.round((pixel * BLU_PER_DIP) / tile.scale);
+  const x = blu(tile.offsetX + left);
+  const y = blu(tile.offsetY + top);
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+    rect: {
+      x,
+      y,
+      width: Math.max(1, blu(tile.offsetX + right) - x),
+      height: Math.max(1, blu(tile.offsetY + bottom) - y),
+    },
+  };
+}

@@ -110,3 +110,62 @@ test("follows a change of devicePixelRatio while running (Chromium)", async ({ p
   const box = await pageBox(page, 0);
   expect(await colourAt(page, box.x + box.width / 2, box.y + 40)).toEqual(mockColours.paper);
 });
+
+test("an edit re-renders only the changed part of a tile, and the patch shows exactly what a whole tile would", async ({
+  page,
+}) => {
+  const renders: { width: number; height: number }[] = [];
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    const sizes: { width: number; height: number }[] = [];
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      const envelope = message as { type?: unknown; payload?: { width?: number; height?: number } };
+      if (envelope.type === "render.tile")
+        sizes.push({ width: envelope.payload?.width ?? 0, height: envelope.payload?.height ?? 0 });
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+    Object.assign(globalThis, { __renders: sizes });
+  });
+  await page.goto("/");
+  await waitForDocument(page);
+  const first = await pageBox(page, 0);
+  await page.getByTestId("document-scroller").click({ position: { x: first.x + first.width / 2, y: first.y + 60 } });
+  await page.evaluate(() => {
+    (globalThis as unknown as { __renders: unknown[] }).__renders.length = 0;
+  });
+  await page.keyboard.type("patch");
+  await expect
+    .poll(() =>
+      page
+        .locator(".input-bridge")
+        .evaluate((element) => (element instanceof HTMLTextAreaElement ? element.value : element.textContent)),
+    )
+    .toBe("patch");
+  await waitForTiles(page);
+  renders.push(
+    ...(await page.evaluate(
+      () => (globalThis as unknown as { __renders: { width: number; height: number }[] }).__renders,
+    )),
+  );
+  // Every request after typing was a strip of the editable line, far smaller than a whole tile.
+  expect(renders.length).toBeGreaterThan(0);
+  for (const size of renders) expect(size.width * size.height).toBeLessThan((512 * 512) / 4);
+
+  const scroller = page.getByTestId("document-scroller");
+  const digest = () =>
+    page.getByTestId("document-tiles").evaluate(async (canvas: HTMLCanvasElement) => {
+      const pixels =
+        canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data ?? new Uint8ClampedArray();
+      const hash = await crypto.subtle.digest("SHA-256", pixels);
+      return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    });
+  const position = await scroller.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop }));
+  const patched = await digest();
+  // Zooming in and back out renders the tiles of this scale again, whole.
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await waitForTiles(page);
+  await page.getByRole("button", { name: "Zoom out" }).click();
+  await scroller.evaluate((element, { left, top }) => element.scrollTo({ left, top, behavior: "instant" }), position);
+  await waitForTiles(page);
+  expect(await digest()).toBe(patched);
+});

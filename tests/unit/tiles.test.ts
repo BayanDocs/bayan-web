@@ -4,12 +4,15 @@ import {
   contentLayout,
   drawOrder,
   type HeldTile,
+  intersection,
   pageAreaSize,
   pagePixels,
+  patchFor,
   pointerToView,
   scaleKey,
   tileSpec,
   toCanvas,
+  union,
   type ViewTransform,
   visiblePages,
   visibleTiles,
@@ -131,5 +134,46 @@ describe("drawing order", () => {
   it("ignores tiles of other pages", () => {
     const other = { spec: tileSpec(pages[1] as PageInfo, 1, 0, 0), stale: false };
     expect(drawOrder(placed, 1, [other])).toEqual([]);
+  });
+});
+
+describe("patches", () => {
+  const page = pages[0] as PageInfo;
+
+  it("cover the dirty rectangle with whole pixels of the tile, clipped to the tile", () => {
+    const tile = tileSpec(page, 1, 0, 0);
+    // A strip like the editable line: from 96 to 720 CSS pixels across, 250.5 to 285 down; at scale 1 one pixel is 19,050 BLU.
+    const dirty = { x: 96 * BLU_PER_DIP, y: 250.5 * BLU_PER_DIP, width: 624 * BLU_PER_DIP, height: 34.5 * BLU_PER_DIP };
+    expect(patchFor(tile, dirty)).toEqual({
+      x: 96,
+      y: 250,
+      width: 512 - 96,
+      height: 35,
+      rect: { x: 96 * BLU_PER_DIP, y: 250 * BLU_PER_DIP, width: (512 - 96) * BLU_PER_DIP, height: 35 * BLU_PER_DIP },
+    });
+    const right = tileSpec(page, 1, 1, 0);
+    expect(patchFor(right, dirty)).toMatchObject({ x: 0, width: 720 - 512, rect: { x: 512 * BLU_PER_DIP } });
+  });
+
+  it("share the tile grid's pixel edges at any scale, so a patch lines up with the tile beneath it", () => {
+    for (const scale of [1.25, 1.5, 2.2, 0.67]) {
+      const tile = tileSpec(page, scale, 1, 0);
+      const patch = patchFor(tile, tile.rect);
+      expect(patch?.rect, `scale ${scale}`).toEqual(tile.rect);
+      expect(patch).toMatchObject({ x: 0, y: 0, width: tile.width, height: tile.height });
+    }
+  });
+
+  it("are null when the dirty rectangle misses the tile", () => {
+    const tile = tileSpec(page, 1, 0, 0);
+    expect(patchFor(tile, { x: 600 * BLU_PER_DIP, y: 0, width: BLU_PER_DIP, height: BLU_PER_DIP })).toBeNull();
+  });
+
+  it("are built from unions and intersections of rectangles", () => {
+    const a = { x: 0, y: 0, width: 10, height: 10 };
+    expect(intersection(a, { x: 5, y: 5, width: 10, height: 10 })).toEqual({ x: 5, y: 5, width: 5, height: 5 });
+    expect(intersection(a, { x: 10, y: 0, width: 5, height: 5 })).toBeNull();
+    expect(union(null, a)).toEqual(a);
+    expect(union(a, { x: 20, y: -5, width: 1, height: 1 })).toEqual({ x: 0, y: -5, width: 21, height: 15 });
   });
 });

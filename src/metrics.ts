@@ -9,7 +9,7 @@ export const measureNames = {
   engineVerify: "bayan:engine-verify",
   /** From a key press to the frame in which the compositor drew the overlay (caret) that the engine sent for it. */
   keyToOverlayDrawn: "bayan:key-to-overlay-drawn",
-  /** From a key press to the start of the frame after that one, by which the browser has presented the overlay (an upper bound). */
+  /** From a key press to the next animation frame after the overlay was drawn, when the browser renders it (an upper bound). */
   keyToOverlayFrame: "bayan:key-to-overlay-frame",
   /** From a key press to the frame in which the compositor drew the re-rendered tile that shows the change. */
   keyToTileDrawn: "bayan:key-to-tile-drawn",
