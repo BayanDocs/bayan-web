@@ -82,6 +82,10 @@ export class DocumentController {
   #shortcuts: Shortcut[] = [];
   #status: DocumentStatus;
   #probes: Probe[] = [];
+  /** A mouse pointerdown waits for its mousedown, which carries the click count. */
+  #mousePress = false;
+  /** The click count of the last mouse press, which its release repeats. */
+  #clicks = 1;
   #viewSetTimer: ReturnType<typeof setTimeout> | undefined;
   #resizeObserver: ResizeObserver | undefined;
   #resolutionQuery: MediaQueryList | undefined;
@@ -257,17 +261,40 @@ export class DocumentController {
     const signal = this.#abort.signal;
     const scroller = this.#elements.scroller;
     scroller.addEventListener("scroll", () => this.#updateTransform(), { passive: true, signal });
-    // Keep keyboard focus in the document when it is clicked (a click would otherwise move focus to the page), except on scrollbars.
+    // A mouse press reaches the engine from its mousedown, whose detail is the click count (following the system's double-click
+    // settings): PointerEvent.detail is 0 in Chromium and Firefox. Touch and pen presses are sent from pointerdown; the mousedown that
+    // browsers fire after them for compatibility is not sent again.
     scroller.addEventListener(
-      "mousedown",
+      "pointerdown",
       (event) => {
-        if (this.#onContent(event)) event.preventDefault();
+        if (event.pointerType === "mouse") this.#mousePress = true;
+        else this.#pointer(event, "down", event.pointerType, Math.max(1, event.detail));
       },
       { signal },
     );
-    scroller.addEventListener("pointerdown", (event) => this.#pointer(event, "down"), { signal });
-    scroller.addEventListener("pointerup", (event) => this.#pointer(event, "up"), { signal });
-    scroller.addEventListener("pointercancel", (event) => this.#pointer(event, "cancel"), { signal });
+    scroller.addEventListener(
+      "mousedown",
+      (event) => {
+        const press = this.#mousePress;
+        this.#mousePress = false;
+        if (!this.#onContent(event)) return;
+        // Keep keyboard focus in the document when it is clicked (a click would otherwise move focus to the page).
+        event.preventDefault();
+        if (!press) return;
+        this.#clicks = Math.max(1, event.detail);
+        this.#pointer(event, "down", "mouse", this.#clicks);
+      },
+      { signal },
+    );
+    const release = (event: PointerEvent, kind: "up" | "cancel") =>
+      this.#pointer(
+        event,
+        kind,
+        event.pointerType,
+        event.pointerType === "mouse" ? this.#clicks : Math.max(1, event.detail),
+      );
+    scroller.addEventListener("pointerup", (event) => release(event, "up"), { signal });
+    scroller.addEventListener("pointercancel", (event) => release(event, "cancel"), { signal });
     this.#resizeObserver = new ResizeObserver(() => this.#resize());
     this.#resizeObserver.observe(scroller);
     this.#watchResolution();
@@ -389,14 +416,15 @@ export class DocumentController {
     return event.clientX - box.left < scroller.clientWidth && event.clientY - box.top < scroller.clientHeight;
   }
 
-  #pointer(event: PointerEvent, kind: "down" | "up" | "cancel"): void {
+  /** Sends a press or release; `clicks` is the click count of the press it belongs to. */
+  #pointer(event: MouseEvent, kind: "down" | "up" | "cancel", pointerType: string, clicks: number): void {
     if (!this.#onContent(event) || this.#client === undefined || this.#docId === null) return;
     // Focus moves to the editable text when the button is released, as a native text field's would be by then: Orca in Chromium stays
     // in browse mode when focus moves on press, and would then take the user's typing as its own commands (WEB-002 report).
     if (kind === "up") this.#bridge.focus();
     const box = this.#elements.scroller.getBoundingClientRect();
     const position = pointerToView(this.#transform(), event.clientX - box.left, event.clientY - box.top);
-    const pointerType = event.pointerType === "mouse" || event.pointerType === "pen" || event.pointerType === "touch";
+    const known = pointerType === "mouse" || pointerType === "pen" || pointerType === "touch";
     void this.#client
       .request("input.pointer", {
         doc_id: this.#docId,
@@ -404,9 +432,9 @@ export class DocumentController {
         x: position.x,
         y: position.y,
         button: event.button,
-        clicks: event.detail,
+        clicks,
         modifiers: { shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey },
-        ...(pointerType ? { pointer_type: event.pointerType as "mouse" | "pen" | "touch" } : {}),
+        ...(known ? { pointer_type: pointerType as "mouse" | "pen" | "touch" } : {}),
       })
       .catch(() => undefined);
   }

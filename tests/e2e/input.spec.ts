@@ -168,6 +168,32 @@ test("the UI manifest's shortcuts go to the engine; clipboard shortcuts and Tab 
   await expect(page.getByRole("region", { name: "Pages" })).toBeFocused();
 });
 
+test("a double click reaches the engine as two presses, the second with a click count of 2", async ({ page }) => {
+  // PointerEvent.detail is 0 in Chromium and Firefox, so the click count must come from the mouse events.
+  await page.addInitScript(() => {
+    const presses: string[] = [];
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      const envelope = message as {
+        type?: unknown;
+        payload?: { kind?: string; clicks?: number; pointer_type?: string };
+      };
+      if (envelope.type === "input.pointer") {
+        presses.push(`${envelope.payload?.kind} ${envelope.payload?.clicks} ${envelope.payload?.pointer_type}`);
+      }
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+    Object.assign(globalThis, { __presses: presses });
+  });
+  await page.goto("/");
+  await waitForDocument(page);
+  const first = await pageBox(page, 0);
+  await page.getByTestId("document-scroller").dblclick({ position: { x: first.x + first.width / 2, y: first.y + 60 } });
+  await expect
+    .poll(() => page.evaluate(() => (globalThis as unknown as { __presses: string[] }).__presses))
+    .toEqual(["down 1 mouse", "up 1 mouse", "down 2 mouse", "up 2 mouse"]);
+});
+
 test("pasting sends the clipboard's plain text to the engine", async ({ page }) => {
   await recordInput(page);
   await openAndFocus(page);
