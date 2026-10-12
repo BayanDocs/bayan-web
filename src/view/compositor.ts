@@ -96,6 +96,22 @@ const PLACEHOLDER = "rgba(128, 128, 128, 0.25)";
 const CARET = "#000000";
 const SELECTION = "rgba(51, 132, 255, 0.35)";
 
+/**
+ * A copy of a bitmap from the worker, in storage that the main thread owns; the transferred bitmap is closed. In Playwright's WebKit 26.6
+ * on Linux, a tile's transferred bitmap sometimes showed another tile's pixels a while after it arrived, although the engine had rendered
+ * the right ones (the hash in its reply was right): its storage was apparently reused for a bitmap that the worker made later. Copying
+ * each tile and patch as it arrives keeps the pixels the compositor draws its own (WEB-002 report, section 11). Chromium and Firefox never
+ * showed it; the copy costs one blit per tile or patch.
+ */
+function ownedCopy(bitmap: ImageBitmap): ImageBitmap {
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const context = canvas.getContext("2d");
+  if (context === null) return bitmap;
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return canvas.transferToImageBitmap();
+}
+
 export class Compositor {
   readonly #options: CompositorOptions;
   readonly #tiles: CanvasRenderingContext2D;
@@ -452,10 +468,11 @@ export class Compositor {
           return;
         }
         this.#inFlight.delete(spec.key);
+        const bitmap = ownedCopy(image.bitmap);
         if (patch === undefined) {
-          this.#receiveTile(flying, image.bitmap);
+          this.#receiveTile(flying, bitmap);
         } else {
-          this.#receivePatch(spec, patch, image.bitmap);
+          this.#receivePatch(spec, patch, bitmap);
         }
         this.#scheduleFrame(true, false);
       },
