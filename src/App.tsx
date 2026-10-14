@@ -1,4 +1,6 @@
+import { engineFiles } from "virtual:bayan-engine";
 import { useEffect, useState } from "react";
+import { DocumentView } from "./DocumentView.tsx";
 import { safeLocalStorage } from "./storage.ts";
 import { ThemeSwitch } from "./ThemeSwitch.tsx";
 import { applyTheme, readStoredTheme, resolveTheme, storeTheme, type Theme } from "./theme.ts";
@@ -10,7 +12,7 @@ function initialTheme(): Theme {
 
 /**
  * The application frame: a title bar, the ribbon region (generated from the shared UI manifest in a later work package, ADR-0019)
- * and the canvas region where engine-rendered pages will be drawn (WEB-002).
+ * and the document region, where the engine's pages are drawn (WEB-002).
  */
 export function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -33,6 +35,10 @@ export function App() {
           <a className="title-bar__link" href="/third-party-licenses.txt">
             Licenses
           </a>
+          {/* The notices of the Rust code compiled into the engine, from its WebAssembly package (config/engine-files.ts). */}
+          <a className="title-bar__link" href={engineFiles.notices.url}>
+            Engine licenses
+          </a>
           <ThemeSwitch theme={theme} onChange={changeTheme} />
         </div>
       </header>
@@ -40,7 +46,7 @@ export function App() {
         <p className="placeholder">Ribbon</p>
       </section>
       <main className="canvas-region" aria-label="Document" data-testid="canvas-region">
-        <div className="page-placeholder" aria-hidden="true" />
+        <DocumentView />
       </main>
     </div>
   );

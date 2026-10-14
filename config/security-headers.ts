@@ -19,13 +19,13 @@ export const cspDirectives: ReadonlyArray<readonly [string, ...string[]]> = [
   ["form-action", "'none'"],
   ["frame-src", "'none'"],
   ["frame-ancestors", "'none'"],
-  // Trusted Types: string-to-code sinks such as innerHTML and script URLs accept only typed values, and 'none' means no policy
-  // may exist to create them. As a result, new Worker(), trustedTypes.createPolicy() and navigator.serviceWorker.register() all
-  // throw a TypeError in Chromium, Firefox and WebKit. Nothing in WEB-001 needs a policy, so 'none' stays for now.
-  // WEB-002's amended AC-5 (BayanDocs/docs: workpackages/phase-0/WEB-002-spike-worker-canvas.md) permits exactly one named
-  // policy, bayan-script-url, to start the engine worker; any other policy needs an approved work package.
+  // Trusted Types: string-to-code sinks such as innerHTML and script URLs accept only typed values, created by a named policy.
+  // Exactly one policy may exist: bayan-script-url, which turns the address of the engine's worker script into the TrustedScriptURL
+  // that new Worker() requires, and refuses every other address (src/security/script-url-policy.ts; WEB-002 AC-5 in BayanDocs/docs:
+  // workpackages/phase-0/WEB-002-spike-worker-canvas.md). Without 'allow-duplicates' a second policy of that name cannot be created,
+  // so nothing else can obtain one. WEB-001 had 'none' here; any further policy needs an approved work package.
   ["require-trusted-types-for", "'script'"],
-  ["trusted-types", "'none'"],
+  ["trusted-types", "bayan-script-url"],
 ];
 
 /** Serializes CSP directives into a header value. */

@@ -1,0 +1,76 @@
+{
+  "browser": "chromium",
+  "platform": "darwin",
+  "name": "startup-roundtrips-memory",
+  "figures": {
+    "startup": {
+      "engineVerifyAndWorker": {
+        "count": 1,
+        "p50": 50,
+        "p95": 50,
+        "p99": 50,
+        "max": 50
+      },
+      "engineReady": {
+        "count": 1,
+        "p50": 118.8,
+        "p95": 118.8,
+        "p99": 118.8,
+        "max": 118.8
+      },
+      "navigationToEngineReady": 313
+    },
+    "roundTrips": {
+      "hello": {
+        "count": 1,
+        "p50": 72.4,
+        "p95": 72.4,
+        "p99": 72.4,
+        "max": 72.4
+      },
+      "ui.manifest": {
+        "count": 1,
+        "p50": 5.5,
+        "p95": 5.5,
+        "p99": 5.5,
+        "max": 5.5
+      },
+      "doc.open": {
+        "count": 1,
+        "p50": 4,
+        "p95": 4,
+        "p99": 4,
+        "max": 4
+      },
+      "view.set": {
+        "count": 1,
+        "p50": 1.7,
+        "p95": 1.7,
+        "p99": 1.7,
+        "max": 1.7
+      },
+      "query.a11y": {
+        "count": 1,
+        "p50": 14.6,
+        "p95": 14.6,
+        "p99": 14.6,
+        "max": 14.6
+      },
+      "render.tile": {
+        "count": 4,
+        "p50": 8.8,
+        "p95": 22.5,
+        "p99": 22.5,
+        "max": 22.5
+      }
+    },
+    "memory": {
+      "tilesHeld": 4,
+      "tileBytes": 3342336,
+      "chromium": {
+        "userAgentSpecificMemoryBytes": null,
+        "mainThreadJsHeapBytes": 10000000
+      }
+    }
+  }
+}

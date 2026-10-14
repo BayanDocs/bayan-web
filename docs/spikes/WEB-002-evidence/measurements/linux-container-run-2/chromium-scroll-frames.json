@@ -1,0 +1,18 @@
+{
+  "browser": "chromium",
+  "platform": "linux",
+  "name": "scroll-frames",
+  "figures": {
+    "frames": 224,
+    "frameIntervalMs": {
+      "count": 223,
+      "p50": 16.7,
+      "p95": 16.7,
+      "p99": 16.7,
+      "max": 16.7
+    },
+    "framesOver33ms": 0,
+    "framesWaitingForFreshTiles": 0,
+    "framesWithPlaceholder": 0
+  }
+}

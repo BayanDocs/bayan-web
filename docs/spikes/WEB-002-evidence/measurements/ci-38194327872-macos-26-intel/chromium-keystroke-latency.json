@@ -1,0 +1,69 @@
+{
+  "browser": "chromium",
+  "platform": "darwin",
+  "name": "keystroke-latency",
+  "figures": {
+    "steady": {
+      "keyToOverlayDrawn": {
+        "count": 44,
+        "p50": 1.7,
+        "p95": 73.8,
+        "p99": 106.2,
+        "max": 106.2
+      },
+      "keyToOverlayFrame": {
+        "count": 44,
+        "p50": 8.7,
+        "p95": 128.8,
+        "p99": 163.7,
+        "max": 163.7
+      },
+      "keyToTileDrawn": {
+        "count": 44,
+        "p50": 25.4,
+        "p95": 163.7,
+        "p99": 228.9,
+        "max": 228.9
+      }
+    },
+    "burst": {
+      "keyToOverlayDrawn": {
+        "count": 40,
+        "p50": 54.8,
+        "p95": 82.3,
+        "p99": 85.1,
+        "max": 85.1
+      },
+      "keyToOverlayFrame": {
+        "count": 40,
+        "p50": 70.4,
+        "p95": 103.6,
+        "p99": 108,
+        "max": 108
+      },
+      "keyToTileDrawn": {
+        "count": 40,
+        "p50": 70.2,
+        "p95": 103.5,
+        "p99": 107.9,
+        "max": 107.9
+      },
+      "roundTrips": {
+        "input.text": {
+          "count": 40,
+          "p50": 54.3,
+          "p95": 81.7,
+          "p99": 84.3,
+          "max": 84.3
+        },
+        "render.tile": {
+          "count": 6,
+          "p50": 3.3,
+          "p95": 24.3,
+          "p99": 24.3,
+          "max": 24.3
+        }
+      }
+    }
+  }
+}

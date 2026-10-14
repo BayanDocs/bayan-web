@@ -1,0 +1,18 @@
+{
+  "browser": "firefox",
+  "platform": "darwin",
+  "name": "zoom-frames",
+  "figures": {
+    "frames": 106,
+    "frameIntervalMs": {
+      "count": 105,
+      "p50": 16.5,
+      "p95": 18.9,
+      "p99": 20.1,
+      "max": 20.9
+    },
+    "framesOver33ms": 0,
+    "framesWaitingForFreshTiles": 58,
+    "framesWithPlaceholder": 0
+  }
+}

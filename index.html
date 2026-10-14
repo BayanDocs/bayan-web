@@ -8,6 +8,9 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Linked rather than imported from JavaScript, so the dev server never needs inline <style> elements (our Content Security Policy forbids them). -->
     <link rel="stylesheet" href="/src/styles.css" />
+    <!-- An element with this id stops React Aria from adding a <style> element of its own for pressable controls, which the policy would
+         block; styles.css holds its rule instead. -->
+    <meta id="react-aria-pressable-style" name="react-aria-pressable-style" content="styles.css" />
   </head>
   <body>
     <div id="root"></div>

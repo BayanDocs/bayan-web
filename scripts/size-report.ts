@@ -1,5 +1,10 @@
-// Reports the size of the production build, raw and compressed (gzip and Brotli, as a web server would send it),
-// and fails if the compressed total exceeds the budget. WEB-001 sets 300 KB for the skeleton; PERF-06 caps the full app at 5 MB.
+// Reports the size of the production build, raw and compressed (gzip and Brotli, as a web server would send it), and fails if a
+// compressed total exceeds its budget. Three budgets, in compressed bytes:
+// - the app itself (everything but the engine): 300 KB, the budget WEB-001 set for the skeleton, unchanged;
+// - the engine's WebAssembly package with its licence notices (WEB-002, config/engine-files.ts): 300 KB, about a quarter above the
+//   mock engine of CORE-007, so that growth is noticed; the work package that brings the real engine sets its own;
+// - everything together: 5 MB, the cap PERF-06 sets for the web app's download (fonts excluded; there are none yet).
+// Every file in the build counts, licence notices included, although the browser downloads those only when someone opens them.
 //
 // Usage: node scripts/size-report.ts <dist-directory>
 
@@ -8,8 +13,19 @@ import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
-/** Compressed-size budget in bytes (1 KB = 1000 bytes, as in the requirements). */
+/** Compressed-size budget of the app itself, in bytes (1 KB = 1000 bytes, as in the requirements): WEB-001's skeleton budget. */
 export const budgetBytes = 300_000;
+
+/** Compressed-size budget of the engine's WebAssembly package and its licence notices (WEB-002). */
+export const engineBudgetBytes = 300_000;
+
+/** Compressed-size cap of the whole build: PERF-06's 5 MB for the web app's initial download, fonts excluded. */
+export const totalBudgetBytes = 5_000_000;
+
+/** Whether a build-relative path belongs to the engine package: its runtime folder or its licence notices (config/engine-files.ts). */
+export function isEngineFile(path: string): boolean {
+  return /^assets\/engine-[0-9a-f]{16}\//.test(path) || path.startsWith("engine-licenses/");
+}
 
 export interface FileSize {
   path: string;
@@ -51,12 +67,27 @@ function main(distArg: string | undefined): void {
   for (const size of sizes) {
     console.log(`${size.path.padEnd(40)}${kb(size.raw)}${kb(size.gzip)}${kb(size.brotli)}`);
   }
-  const total = compressedTotal(sizes);
-  console.log(
-    `Total compressed (gzip): ${(total / 1000).toFixed(1)} KB; budget ${(budgetBytes / 1000).toFixed(0)} KB.`,
-  );
-  if (total > budgetBytes) {
-    throw new Error("the production bundle exceeds its size budget.");
+  const groups = [
+    {
+      name: "App (without the engine)",
+      total: compressedTotal(sizes.filter((size) => !isEngineFile(size.path))),
+      budget: budgetBytes,
+    },
+    {
+      name: "Engine package",
+      total: compressedTotal(sizes.filter((size) => isEngineFile(size.path))),
+      budget: engineBudgetBytes,
+    },
+    { name: "Everything", total: compressedTotal(sizes), budget: totalBudgetBytes },
+  ];
+  for (const group of groups) {
+    console.log(
+      `${group.name}, compressed (gzip): ${(group.total / 1000).toFixed(1)} KB; budget ${(group.budget / 1000).toFixed(0)} KB.`,
+    );
+  }
+  const over = groups.filter((group) => group.total > group.budget).map((group) => group.name);
+  if (over.length > 0) {
+    throw new Error(`the production build exceeds its size budget: ${over.join(", ")}.`);
   }
 }
 

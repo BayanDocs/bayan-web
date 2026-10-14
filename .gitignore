@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# The engine's WebAssembly package, built from the pinned bayan-core commit by scripts/engine-package.sh (and its unfinished build).
+engine-package/
+.engine-package.partial/
 test-results/
 playwright-report/
 *.tsbuildinfo

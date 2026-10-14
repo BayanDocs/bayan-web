@@ -1,0 +1,6 @@
+# WebKit at a device-pixel ratio of 1, in the Linux container, 2026-10-12 (docs/spikes/WEB-002-report.md, sections 4 and 13).
+# The run's JSON files were not kept; these are the lines it printed, recovered from the session's log. The keystroke line was
+# cut off in that log after the steady-typing figures, so its burst figures are lost (the report gives none for this row).
+[measurement] webkit-dpr1 scroll-frames: {"frames":200,"frameIntervalMs":{"count":199,"p50":18.3,"p95":23.5,"p99":33.7,"max":35.7},"framesOver33ms":2,"framesWaitingForFreshTiles":0,"framesWithPlaceholder":0}
+[measurement] webkit-dpr1 zoom-frames: {"frames":153,"frameIntervalMs":{"count":152,"p50":18.4,"p95":30.9,"p99":36.7,"max":37.1},"framesOver33ms":3,"framesWaitingForFreshTiles":66,"framesWithPlaceholder":0}
+[measurement] webkit-dpr1 keystroke-latency: {"steady":{"keyToOverlayDrawn":{"count":44,"p50":1.9,"p95":3,"p99":7.3,"max":7.3},"keyToOverlayFrame":{"count":44,"p50":11.5,"p95":17.3,"p99":20.4,"max":20.4},"keyToTileDrawn":{"count":44,"p50":28,"p95":37.7,"p99":39.9,"max":39.9}},"burst":{"keyToOverlayDrawn":{"count":40,"p50":4.7,"p95":13.8,"p99":15.6,"max":15.6},"keyToOverlayFrame":{"count":40,"p50": … (cut off here in the log)

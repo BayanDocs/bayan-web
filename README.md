@@ -6,13 +6,15 @@ This repository is a deliberately **thin shell**. The engine, [bayan-core](https
 
 Built with TypeScript, React and Vite; packages managed with pnpm under a strict supply-chain policy.
 
-> **Status: Phase 0 (Foundations).** The application skeleton, security hardening and verification gate are in place ([WEB-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-001-web-scaffold.md)); the engine worker, page canvas and input bridge come next ([WEB-002](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-002-spike-worker-canvas.md)).
+> **Status: Phase 0 (Foundations).** The application skeleton, security hardening and verification gate are in place ([WEB-001](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-001-web-scaffold.md)), and the spike of [WEB-002](https://github.com/BayanDocs/docs/blob/HEAD/workpackages/phase-0/WEB-002-spike-worker-canvas.md) runs bayan-core's engine skeleton in a Web Worker and shows its mock document: a tile compositor, input bridges for keyboards and input methods, and an accessibility mirror for screen readers. Its findings are in [docs/spikes/WEB-002-report.md](docs/spikes/WEB-002-report.md).
 
 ## Getting started
 
 **Supported development platforms:** Ubuntu 24.04 on x86-64, and macOS 14 or later on Apple Silicon or Intel. CI checks every change on Ubuntu 24.04, on macOS 15 with Apple Silicon and on macOS 26 with Intel.
 
 Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs everything at pinned versions and checks every download against a known hash: Node.js 24 (`.nvmrc`), pnpm (its native binary, checked against the sha512 that `pnpm-lock.yaml` records for it; no Corepack needed), the project's packages, and the browser builds the tests use. Playwright tells the script which browser builds your machine needs, and the script refuses any build it has no pinned hash for. When the script puts Node.js or pnpm in its own folder (`~/.local/share/bayandocs`), it prints the `export PATH=…` line to add to your shell profile.
+
+Then build the engine with `scripts/engine-package.sh`, and again whenever `bayan-core.pin` changes. The app runs [bayan-core](https://github.com/BayanDocs/bayan-core)'s engine as WebAssembly, and until bayan-core publishes releases the web app builds it from the commit named in `bayan-core.pin` (ADR-0002 §4). The script needs `git` and [rustup](https://rustup.rs): it clones bayan-core into `~/.cache/bayandocs/bayan-core`, refuses a commit that is not one of bayan-core's main branch or that reached it less than 24 hours before it was pinned (ADR-0017; `scripts/check-engine-pin.sh`, which reads this repository's history and therefore refuses a shallow clone), installs bayan-core's pinned Rust toolchain and wasm-bindgen with bayan-core's own setup script, and writes the package to `engine-package/` (about a minute after the first run). With a bayan-core checkout of the pinned commit at hand, as in BayanDocs cloud sessions, `BAYAN_CORE_DIR=/home/user/bayan-core scripts/engine-package.sh` builds from it instead of cloning.
 
 - **Ubuntu 24.04:** the script also installs the browsers' system libraries from a frozen, signed Ubuntu archive snapshot, which needs `sudo`.
 - **macOS:** open Terminal in the repository and run `scripts/dev-setup.sh`. Nothing needs installing first: the script works with what macOS includes (bash 3.2, curl, unzip, tar and shasum). The browsers go to `~/Library/Caches/ms-playwright`, where Playwright looks for them.
@@ -23,7 +25,8 @@ Run `scripts/dev-setup.sh` once, and again whenever it changes. It installs ever
 | `pnpm dev` | Development server at http://localhost:5173 with the same security headers as production (except `Integrity-Policy`). |
 | `pnpm build` | Production build in `dist/`, then Subresource Integrity hashes and a size report. |
 | `pnpm preview` | Serves `dist/` at http://localhost:4173 with the production security headers. |
-| `pnpm verify` | The full verification gate: policy check, lockfile integrity check, lint, type check, unit tests, build, end-to-end tests in Chromium, Firefox and WebKit, and the audit (fails on high and critical advisories). Run it before every push. |
+| `scripts/engine-package.sh` | Builds the engine's WebAssembly package from the bayan-core commit in `bayan-core.pin` into `engine-package/`, which the dev server, the build and the tests need. |
+| `pnpm verify` | The full verification gate: policy check, lockfile integrity check, engine check (`engine-package/` was built from the pinned commit), lint, type check, unit tests, build, end-to-end tests and measurements in Chromium, Firefox and WebKit, and the audit (fails on high and critical advisories). Run it before every push. |
 | `pnpm format` | Formats the code with Biome. |
 
 Use pnpm only, never npm or Yarn; the dependency rules are in [AGENTS.md](AGENTS.md#dependency-mechanisms).
@@ -38,16 +41,18 @@ if [ -x /home/user/bayan-web/scripts/dev-setup.sh ]; then /home/user/bayan-web/s
 
 | Path | Contents |
 |---|---|
-| `src/` | The React application: the frame with its ribbon and canvas regions, themes and controls. |
+| `src/` | The React application: the frame with its ribbon and document regions, themes and controls; `engine/` (starting the engine's worker and the main thread's side of the protocol), `view/` (the tile compositor and the document view's controller), `input/` (the two input bridges), `a11y/` (the accessibility mirror) and `security/` (the one Trusted Types policy). |
+| `bayan-core.pin`, `config/engine-*.ts` | The bayan-core commit whose engine the app serves, and how the build serves its files (`engine-files.ts`, `engine-plugin.ts`). |
 | `config/security-headers.ts` | The HTTP security headers (Content Security Policy, Trusted Types, cross-origin isolation, `Integrity-Policy`), used by the dev and preview servers. |
 | `deploy/nginx/` | A sample production configuration that sends the same headers; a unit test keeps it in sync. |
-| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `check-lockfile-integrity.ts` (where the locked packages come from), `audit.ts` (the audit gate), `pnpm-settings.ts` and `strict-yaml.ts` (how those three read pnpm's settings and YAML files), `sri.ts` (integrity hashes), `check-licenses.ts` (third-party licence notices) and `size-report.ts` (bundle size budget). |
+| `scripts/` | `dev-setup.sh` (tool installation), `pnpm-binary.ts` (finds and checks pnpm's native binary), `check-policy.ts` (dependency policy check), `check-lockfile-integrity.ts` (where the locked packages come from), `audit.ts` (the audit gate), `pnpm-settings.ts` and `strict-yaml.ts` (how those three read pnpm's settings and YAML files), `sri.ts` (integrity hashes), `check-licenses.ts` (third-party licence notices), `size-report.ts` (size budgets), `engine-package.sh` (builds the engine package), `check-engine-pin.sh` (checks the age and origin of its pinned commit) and `check-engine.ts` (checks it against the pin). |
+| `docs/spikes/` | Reports of spikes: what was tried, measured and decided (WEB-002). |
 | `tests/unit/`, `tests/e2e/` | Vitest unit tests and Playwright end-to-end tests. |
 | `pnpm-workspace.yaml`, `.npmrc` | Package-manager settings that enforce the supply-chain policy (ADR-0017). |
 
 ## Deploying
 
-Serve the `dist/` folder that `pnpm build` produces, with the security headers from `config/security-headers.ts`; `deploy/nginx/` is a sample nginx configuration. Keep `third-party-licenses.txt` published next to `index.html`: the app's "Licenses" link points to it, and the licences of the bundled packages (MIT and Apache-2.0) require their notices whenever the code is redistributed, which every page load does. Treat it like the "Source code" link that OPS-08 requires: operators of modified versions must keep both working.
+Serve the `dist/` folder that `pnpm build` produces, with the security headers from `config/security-headers.ts`; `deploy/nginx/` is a sample nginx configuration. Keep `third-party-licenses.txt` published next to `index.html`: the app's "Licenses" link points to it, and the licences of the bundled packages (MIT and Apache-2.0) require their notices whenever the code is redistributed, which every page load does. Treat it like the "Source code" link that OPS-08 requires: operators of modified versions must keep both working. The same holds for the folder `engine-licenses/`, the notices of the Rust code compiled into the engine, which the app's "Engine licenses" link opens. The engine's files are served from a content-addressed folder `assets/engine-<digest>/`, so they can be cached for a year like the rest of `assets/`; serve `.wasm` files as `application/wasm`.
 
 ## Where things are decided
 

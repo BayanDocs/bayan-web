@@ -26,6 +26,34 @@ test("the preview server sends every security header on every resource", async (
   }
 });
 
+test("the engine's files are served with every security header and the types browsers need", async ({
+  page,
+  request,
+}) => {
+  const engineFiles: string[] = [];
+  page.on("request", (sent) => {
+    const path = new URL(sent.url()).pathname;
+    if (path.startsWith("/assets/engine-")) engineFiles.push(path);
+  });
+  await page.goto("/");
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready");
+  const paths = [...new Set(engineFiles)].sort();
+  expect(paths.map((path) => path.replace(/^\/assets\/engine-[0-9a-f]{16}\//, ""))).toEqual([
+    "bayan-worker.js",
+    "bayan_wasm.js",
+    "bayan_wasm_bg.wasm",
+  ]);
+  for (const path of paths) {
+    const response = await request.get(path);
+    const headers = response.headers();
+    for (const [name, value] of Object.entries(productionHeaders)) {
+      expect(headers[name.toLowerCase()], `${name} on ${path}`).toBe(value);
+    }
+    // WebAssembly streaming compilation needs application/wasm; module scripts need a JavaScript type (nosniff is on).
+    expect(headers["content-type"], path).toMatch(path.endsWith(".wasm") ? /^application\/wasm/ : /^text\/javascript/);
+  }
+});
+
 test("the built page has no inline scripts and every script carries an integrity hash", async ({ request }) => {
   const html = await (await request.get("/")).text();
   const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map((match) => match[0]);
