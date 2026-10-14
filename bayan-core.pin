@@ -4,8 +4,9 @@
 # scripts/engine-package.sh builds engine-package/ from this commit. Before that, scripts/check-engine-pin.sh refuses any commit that
 # is not one of the commits of bayan-core's main branch, so only reviewed and merged engine code reaches the app, and any commit that
 # reached main less than 24 hours before now or before the bayan-web commit that added the commit line below (at the earlier of its
-# author and committer times; a later change to these comments does not count), as ADR-0017 rule 4 requires; it reads the history, so
-# it refuses a shallow clone of bayan-web.
+# author and committer times; a later change to these comments does not count), as ADR-0017 rule 4 sets out for dependencies (its
+# amendment of 2026-10-12 exempts this pin during Phase 0, but bayan-web keeps the 24 hours; AGENTS.md says why); it reads the history,
+# so it refuses a shallow clone of bayan-web.
 # `pnpm verify` fails if engine-package/ was built from another commit.
 # Change it like a dependency: in its own pull request, saying what changed in bayan-core between the two commits.
 commit=e7d6f1e1da00df143f88a6a00e041fc3bc188e3f
