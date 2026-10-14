@@ -24,7 +24,10 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },
-    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    // WebKit's frames sometimes take seconds on CI's macOS 26 Intel runner, and in containers without a graphics processor, where it
+    // draws in software at the device-pixel ratio of 2 of Playwright's Desktop Safari profile. A page fills at about one tile per frame
+    // (tests/e2e/document.ts), so WebKit's tests get three times Playwright's default time limit.
+    { name: "webkit", use: { ...devices["Desktop Safari"] }, timeout: 90_000 },
   ],
   webServer: {
     command: `pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`,
