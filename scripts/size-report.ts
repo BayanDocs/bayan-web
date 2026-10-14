@@ -1,8 +1,9 @@
 // Reports the size of the production build, raw and compressed (gzip and Brotli, as a web server would send it), and fails if a
 // compressed total exceeds its budget. Three budgets, in compressed bytes:
 // - the app itself (everything but the engine): 300 KB, the budget WEB-001 set for the skeleton, unchanged;
-// - the engine's WebAssembly package with its licence notices (WEB-002, config/engine-files.ts): 300 KB, about a quarter above the
-//   mock engine of CORE-007, so that growth is noticed; the work package that brings the real engine sets its own;
+// - the engine's WebAssembly package with its licence notices (WEB-002, config/engine-files.ts): 3 MB, which the owner set on
+//   2026-10-14 so that the real engine fits (ADR-0008 and ADR-0009 expect about 1 MB each for the collaboration engine and the text
+//   stack) and the build still fails if the package grows far beyond that;
 // - everything together: 5 MB, the cap PERF-06 sets for the web app's download (fonts excluded; there are none yet).
 // Every file in the build counts, licence notices included, although the browser downloads those only when someone opens them.
 //
@@ -16,8 +17,8 @@ import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 /** Compressed-size budget of the app itself, in bytes (1 KB = 1000 bytes, as in the requirements): WEB-001's skeleton budget. */
 export const budgetBytes = 300_000;
 
-/** Compressed-size budget of the engine's WebAssembly package and its licence notices (WEB-002). */
-export const engineBudgetBytes = 300_000;
+/** Compressed-size budget of the engine's WebAssembly package and its licence notices (WEB-002; 3 MB since 2026-10-14). */
+export const engineBudgetBytes = 3_000_000;
 
 /** Compressed-size cap of the whole build: PERF-06's 5 MB for the web app's initial download, fonts excluded. */
 export const totalBudgetBytes = 5_000_000;
