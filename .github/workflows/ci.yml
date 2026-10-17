@@ -1,4 +1,4 @@
-# Continuous integration for bayan-web: the full verification gate (`pnpm verify`) on every pull request, on pushes to main and nightly
+# Continuous integration for bayan-web: the full verification gate (`pnpm verify`) on every pull request, in the merge queue, on pushes to main and nightly
 # (the nightly run re-checks the audit against newly published advisories, ADR-0017 §7).
 # Workflow conventions (ADR-0017, X-002): no permissions by default, actions pinned to full commit SHAs with the version in a comment,
 # no persisted credentials, timeouts and a concurrency group on every job, and every tool installed at a pinned, checksum-verified version.
@@ -6,6 +6,8 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
