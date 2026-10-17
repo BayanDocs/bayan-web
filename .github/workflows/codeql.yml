@@ -1,11 +1,13 @@
-# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
+# Scans this repository with CodeQL, GitHub's static analysis, on every pull request, in the merge queue, on pushes to main and weekly, and uploads the results to GitHub code scanning (work package X-002). Alerts appear under Security → Code scanning, and a pull request shows the ones it would add.
 # Languages: GitHub Actions (the workflows), JavaScript and TypeScript (the app in src/, its scripts and tests) and Python (the checks in .github/). None of them needs a build, so no package code runs here.
 # CodeQL's engine, the CodeQL bundle, is downloaded by this workflow and checked against the SHA-256 that its release publishes, then handed to the CodeQL action, which would otherwise download it without checking a hash. Keep CODEQL_VERSION equal to the bundle that the pinned github/codeql-action names in its src/defaults.json (version 4.38.3 names 2.27.2), and update both together in the monthly dependency session, in all five BayanDocs repositories.
-# Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request trigger (never pull_request_target).
+# Workflow conventions (AGENTS.md): GitHub's own actions only, pinned to full commit SHAs with the version in a comment; per-job permissions; no credentials kept after checkout; timeouts; the pull_request and merge_group triggers (never pull_request_target).
 name: CodeQL
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
