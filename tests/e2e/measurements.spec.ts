@@ -80,9 +80,12 @@ test("keystroke to overlay and to tile, and the worker's round trips", async ({ 
   await waitForDocument(page);
   const first = await pageBox(page, 0);
   await page.getByTestId("document-scroller").click({ position: { x: first.x + first.width / 2, y: first.y + 60 } });
-  // Steady typing, about 12 characters a second, then a burst as fast as the keyboard sends.
-  await page.keyboard.type("the quick brown fox jumps over the lazy dog ", { delay: 80 });
-  await waitForTiles(page);
+  // Steady typing, about 12 characters a second, then a burst as fast as the keyboard sends. The browser's own frame times while typing
+  // steadily set the limit for the caret below.
+  const typingFrames = await frames(page, async () => {
+    await page.keyboard.type("the quick brown fox jumps over the lazy dog ", { delay: 80 });
+    await waitForTiles(page);
+  });
   const steady = {
     keyToOverlayDrawn: summarize(await measures(page, "bayan:key-to-overlay-drawn")),
     keyToOverlayFrame: summarize(await measures(page, "bayan:key-to-overlay-frame")),
@@ -100,28 +103,40 @@ test("keystroke to overlay and to tile, and the worker's round trips", async ({ 
       "render.tile": summarize(await measures(page, "bayan:engine:render.tile")),
     },
   };
-  await record(testInfo, "keystroke-latency", { steady, burst });
+  await record(testInfo, "keystroke-latency", { steady, burst, typingFrames });
   expect(steady.keyToOverlayDrawn["count"]).toBeGreaterThanOrEqual(40);
-  expect(steady.keyToOverlayFrame["p95"]).toBeLessThan(1000);
+  // The caret reaches its frame within 1 s, or, where the browser's own frames are too slow for that, within four of its longest frames
+  // while typing: a key can wait a frame to be handled, and its caret one frame to be drawn and another to be shown. (WebKit's single
+  // frames took up to 3 s on CI's macOS 26 Intel runner.)
+  const longestFrame = (typingFrames["frameIntervalMs"] as Record<string, number>)["max"] ?? Number.NaN;
+  expect(steady.keyToOverlayFrame["p95"]).toBeLessThan(Math.max(1000, 4 * longestFrame));
 });
 
 test("frame times while scrolling through the document", async ({ page }, testInfo) => {
   await page.goto("/");
   await waitForDocument(page);
   const figures = await frames(page, async () => {
-    // Scroll at 1,500 CSS pixels a second, one step per frame, to the end and back: about 3 seconds.
+    // Scroll at 1,500 CSS pixels a second, one step per frame, to the end and back: about 3 seconds. Where the browser's frames are slow
+    // (WebKit's single frames took up to 3 s on CI's macOS 26 Intel runner), one pass records too few frames for the figures to mean
+    // much, so scroll again until more than 30 frames are recorded, at most 10 times.
     await page.getByTestId("document-scroller").evaluate(
       (scroller) =>
         new Promise<void>((resolve) => {
+          const log = (window as unknown as { __frames: { frames: number } }).__frames;
           const end = scroller.scrollHeight - scroller.clientHeight;
           let direction = 1;
+          let passes = 0;
           let last = 0;
           const step = (time: number) => {
             const delta = last === 0 ? 16 : time - last;
             last = time;
             scroller.scrollTop += direction * 1.5 * delta;
             if (direction === 1 && scroller.scrollTop >= end - 1) direction = -1;
-            if (direction === -1 && scroller.scrollTop <= 0) return resolve();
+            if (direction === -1 && scroller.scrollTop <= 0) {
+              passes += 1;
+              if (log.frames > 30 || passes === 10) return resolve();
+              direction = 1;
+            }
             requestAnimationFrame(step);
           };
           requestAnimationFrame(step);

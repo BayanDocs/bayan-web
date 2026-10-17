@@ -1,9 +1,22 @@
 import { expect, type Page } from "@playwright/test";
 
+/**
+ * How long to wait for the engine to start and for the tiles to arrive. The compositor asks for the next tile in the animation frame
+ * after the last one arrived, so filling a page takes about one frame per tile, and where the browser's frames are slow its 12 to 18
+ * tiles need more than Playwright's default 5 s: WebKit's single frames took up to 3 s on CI's macOS 26 Intel runner, and it is slow in
+ * containers without a graphics processor too, where it draws in software. These waits check that the engine starts and the tiles
+ * arrive, not how fast; measurements.spec.ts measures that.
+ */
+const renderTimeoutMs = 30_000;
+
 /** Waits until the engine is ready, the mock document is open and every visible tile is drawn. */
 export async function waitForDocument(page: Page): Promise<void> {
-  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready");
-  await expect(page.getByTestId("a11y-mirror").getByRole("heading", { level: 1 })).toBeAttached();
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready", {
+    timeout: renderTimeoutMs,
+  });
+  await expect(page.getByTestId("a11y-mirror").getByRole("heading", { level: 1 })).toBeAttached({
+    timeout: renderTimeoutMs,
+  });
   await waitForTiles(page);
 }
 
@@ -12,8 +25,8 @@ export async function waitForTiles(page: Page): Promise<void> {
   // The counts are updated once per frame, so let a frame pass first: an invalidation that just arrived is then counted.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const tiles = page.getByTestId("document-tiles");
-  await expect(tiles).toHaveAttribute("data-tiles-missing", "0");
-  await expect(tiles).toHaveAttribute("data-tiles-in-flight", "0");
+  await expect(tiles).toHaveAttribute("data-tiles-missing", "0", { timeout: renderTimeoutMs });
+  await expect(tiles).toHaveAttribute("data-tiles-in-flight", "0", { timeout: renderTimeoutMs });
 }
 
 /** The colour of a device pixel of the tile canvas, as [r, g, b, a]. */

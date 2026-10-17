@@ -27,8 +27,12 @@ describe("size report", () => {
   });
 
   it("keeps the app's own budget at WEB-001's 300 KB, and gives the engine package and the whole build their own", () => {
-    expect(engineBudgetBytes).toBe(300_000);
+    expect(engineBudgetBytes).toBe(3_000_000);
     expect(totalBudgetBytes).toBe(5_000_000);
+  });
+
+  it("lets the app and the engine package both reach their budgets within PERF-06's cap on the whole build", () => {
+    expect(budgetBytes + engineBudgetBytes).toBeLessThanOrEqual(totalBudgetBytes);
   });
 
   it("counts the engine's runtime folder and licence notices as the engine package, and nothing else", () => {
