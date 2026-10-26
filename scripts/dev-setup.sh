@@ -27,7 +27,7 @@ set -euo pipefail
 
 NODE_VERSION=24.21.0 # Active LTS, released 2026-09-07; must equal .nvmrc
 PLAYWRIGHT_VERSION=1.63.0 # must equal @playwright/test in package.json; the browser builds below belong to this version
-APT_SNAPSHOT=20261003T000000Z # Ubuntu archive as of 2026-10-03 00:00 UTC, the same snapshot as the BayanDocs cloud environment
+APT_SNAPSHOT=20261025T000000Z # Ubuntu archive as of 2026-10-25 00:00 UTC, the same snapshot as the BayanDocs cloud environment
 
 # SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.21.0, whose signature by a Node.js release key was checked.
 node_sha256() {
