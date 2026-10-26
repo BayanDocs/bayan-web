@@ -78,9 +78,12 @@ test("the page is cross-origin isolated", async ({ page }) => {
  * Opens the app with the system colour scheme set to light or dark.
  * Playwright's colour-scheme emulation is lost when Firefox moves a cross-origin-isolated page into its own process,
  * so the scheme is applied to the loaded page and the page is then reloaded (the reload stays in that process).
+ * The reload waits until the app has started: a reload while the engine's worker is still downloading its files now and
+ * then makes WebKit fail the reload itself or the reloaded page's own scripts ("WebKit encountered an internal error").
  */
 async function openWithSystemScheme(page: Page, colorScheme: "light" | "dark"): Promise<void> {
   await page.goto("/");
+  await waitForDocument(page);
   await page.emulateMedia({ colorScheme });
   await page.reload();
   expect(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(colorScheme === "dark");
