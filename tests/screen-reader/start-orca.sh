@@ -4,8 +4,8 @@
 # (tests/screen-reader/orca.ts; docs/spikes/WEB-002-report.md). Not part of `pnpm verify`.
 #
 # Ubuntu 24.04 only, on a machine without a desktop session, such as a container. None of these packages is a dependency of the app
-# or its gate. Install them from the Ubuntu archive frozen at the snapshot scripts/dev-setup.sh uses (APT_SNAPSHOT), so that no package
-# younger than a day can arrive (ADR-0017 rule 4):
+# or its gate. Install them from the Ubuntu archive frozen at a snapshot, so that no package younger than a day can arrive (ADR-0017
+# rule 4); this is the snapshot that scripts/dev-setup.sh used (APT_SNAPSHOT) when the evidence was recorded:
 #   sudo apt-get update --snapshot 20261003T000000Z
 #   sudo apt-get install --no-install-recommends --snapshot 20261003T000000Z orca at-spi2-core dbus-x11 python3-pyatspi xdotool xvfb
 # That installs orca 46.1-1ubuntu1, at-spi2-core 2.52.0-1build1, dbus-x11 1.14.10-4ubuntu4.1, python3-pyatspi 2.46.1-1,
