@@ -18,7 +18,7 @@ Then build the engine with `scripts/engine-package.sh`, and again whenever `baya
 
 - **Ubuntu 24.04:** the script also installs the browsers' system libraries from a frozen, signed Ubuntu archive snapshot, which needs `sudo`.
 - **macOS:** open Terminal in the repository and run `scripts/dev-setup.sh`. Nothing needs installing first: the script works with what macOS includes (bash 3.2, curl, unzip, tar and shasum). The browsers go to `~/Library/Caches/ms-playwright`, where Playwright looks for them.
-- **Other systems** are not supported by the script. You can still install Node.js 24.21.0 and pnpm 12.9.0 yourself and the browsers with `pnpm exec playwright install chromium-headless-shell firefox webkit`, but those downloads are not checked against our pins.
+- **Other systems** are not supported by the script. You can still install Node.js 24.22.1 and pnpm 12.9.0 yourself and the browsers with `pnpm exec playwright install chromium-headless-shell firefox webkit`, but those downloads are not checked against our pins.
 
 | Command | What it does |
 |---|---|
