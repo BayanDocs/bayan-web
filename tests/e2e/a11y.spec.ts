@@ -226,26 +226,23 @@ test("a tree deeper than the mirror's limit becomes lines of text below the limi
 });
 
 /**
- * The updates the timing test hands the app, built in the page: `many-deepest` replaces the last paragraph (level 2) with a chain down to
- * level 63 whose node there has `n` children on level 64, the mirror's deepest level, each with one child below it; `one-deepest` replaces
- * it with a chain to a single node on level 64 with 20,000 children below it; and `changes-below` changes `n` of those children.
- */
-type UpdateShape = "many-deepest" | "one-deepest" | "changes-below";
-
-/**
- * Hands the app an a11y.update of shape `shape` as the engine would send it, `rounds` times, each built afresh, and returns the fastest time
- * the mirror took, in milliseconds: the update is applied synchronously while the event is dispatched. The fastest of several rounds keeps
- * garbage collection and other noise out of the comparison.
+ * Times the mirror's work on a11y.updates that the test hands the app as the engine would send them, and returns how long the mirror took
+ * for each timed update, in milliseconds, one list for each of `sizes`: the mirror applies an update synchronously while its event is
+ * dispatched. Every update replaces the last paragraph (level 2) or nodes below it. Each round times one update of each size in turn, so
+ * that a machine that is busy for a while slows all sizes alike. `forget`: for each size n, a chain down to level 63 whose node there has n
+ * children on level 64, the mirror's deepest level, each with one node below it, is built untimed, and then replacing that chain with a
+ * single paragraph is timed, which forgets all of them. `change`: a chain down to a single node on level 64 with 20,000 nodes below it is
+ * built once, untimed, and for each size n, one update that changes n of those nodes is timed.
  */
 async function timeUpdates(
   page: Page,
   paragraph: number,
-  shape: UpdateShape,
-  n: number,
+  kind: "forget" | "change",
+  sizes: readonly number[],
   rounds: number,
-): Promise<number> {
+): Promise<number[][]> {
   return page.evaluate(
-    ({ paragraph, shape, n, rounds }) => {
+    ({ paragraph, kind, sizes, rounds }) => {
       interface Node {
         id: number;
         role: string;
@@ -259,40 +256,49 @@ async function timeUpdates(
         }
         return node;
       };
-      const changes = (round: number): { kind: string; node: Node }[] => {
-        if (shape === "many-deepest") {
-          const parent: Node = { id: 3_000_063, role: "paragraph", children: [] };
-          for (let i = 0; i < n; i += 1) {
-            const below: Node = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i} in round ${round}` };
-            parent.children?.push({ id: 4_000_000 + i, role: "paragraph", text: `Owner ${i}`, children: [below] });
-          }
-          return [{ kind: "replace", node: chainDownTo(parent, 63) }];
-        }
-        if (shape === "one-deepest") {
-          const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
-          for (let i = 0; i < 20_000; i += 1)
-            owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
-          return [{ kind: "replace", node: chainDownTo(owner, 64) }];
-        }
-        return Array.from({ length: n }, (_, i) => ({
-          kind: "replace",
-          node: { id: 7_000_000 + i * 37, role: "paragraph", text: `Changed ${i * 37} in round ${round}` },
-        }));
-      };
       const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
-      let fastest = Number.POSITIVE_INFINITY;
-      for (let round = 0; round < rounds; round += 1) {
-        const payload = { doc_id: scope.__docId, changes: changes(round), caret: null };
-        const event = new MessageEvent("message", {
-          data: { v: 0, type: "a11y.update", seq: 2_000_000 + round, payload },
-        });
+      let seq = 2_000_000;
+      const apply = (changes: { kind: string; node: Node }[]): number => {
+        seq += 1;
+        const payload = { doc_id: scope.__docId, changes, caret: null };
+        const event = new MessageEvent("message", { data: { v: 0, type: "a11y.update", seq, payload } });
         const start = performance.now();
         scope.__engineWorker.dispatchEvent(event);
-        fastest = Math.min(fastest, performance.now() - start);
+        return Math.round((performance.now() - start) * 10) / 10;
+      };
+      const times = sizes.map((): number[] => []);
+      if (kind === "change") {
+        const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
+        for (let i = 0; i < 20_000; i += 1)
+          owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
+        apply([{ kind: "replace", node: chainDownTo(owner, 64) }]);
       }
-      return fastest;
+      for (let round = 1; round <= rounds; round += 1) {
+        for (const [size, n] of sizes.entries()) {
+          if (kind === "forget") {
+            const parent: Node = { id: 3_000_063, role: "paragraph", children: [] };
+            for (let i = 0; i < n; i += 1) {
+              const below: Node = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i}` };
+              parent.children?.push({ id: 4_000_000 + i, role: "paragraph", text: `Owner ${i}`, children: [below] });
+            }
+            apply([{ kind: "replace", node: chainDownTo(parent, 63) }]);
+            // Without the tree in place, the timed update would have nothing to forget.
+            if (document.querySelector(`[data-node-id="${4_000_000 + n - 1}"]`) === null)
+              throw new Error("The tree to forget is not in place.");
+            const paragraphAgain: Node = { id: paragraph, role: "paragraph", text: `Replaced in round ${round}` };
+            times[size]?.push(apply([{ kind: "replace", node: paragraphAgain }]));
+          } else {
+            const changes = Array.from({ length: n }, (_, i) => ({
+              kind: "replace",
+              node: { id: 7_000_000 + i * 37, role: "paragraph", text: `Changed ${i * 37} in round ${round}` },
+            }));
+            times[size]?.push(apply(changes));
+          }
+        }
+      }
+      return times;
     },
-    { paragraph, shape, n, rounds },
+    { paragraph, kind, sizes, rounds },
   );
 }
 
@@ -304,24 +310,33 @@ test("updates below the mirror's depth limit take time in proportion to their si
   const mirror = page.getByTestId("a11y-mirror");
   const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
   expect(id).toBeGreaterThan(0);
-  // Replacing the ancestor of many nodes on the deepest level forgets them all and builds them again. Ten times as many must take about ten
-  // times as long; forgetting each of them by searching all the others (the code before this test) made it a hundred times as long.
-  const small = await timeUpdates(page, id, "many-deepest", 2_000, 3);
-  const large = await timeUpdates(page, id, "many-deepest", 20_000, 3);
-  await expect(mirror.getByText("Below 19999 in round 2")).toBeAttached();
-  expect(large / Math.max(small, 1), `2,000 nodes took ${small} ms, 20,000 took ${large} ms`).toBeLessThan(30);
+  // Only ratios are compared, never times, so that a slow machine slows both sides alike. Each side is its fastest round, so that a pause
+  // for garbage collection or for another program in a round does not count. And the smaller side counts as at least 2 ms: a busy machine
+  // can leave a task of a millisecond untouched while it slows a longer one, so a smaller side of a fraction of a millisecond would make
+  // the ratio depend on how busy the machine is.
+  const ratio = (larger: number[] = [], smaller: number[] = []) =>
+    Math.min(...larger) / Math.max(Math.min(...smaller), 2);
+  // Replacing the ancestor of many nodes on the deepest level forgets them all, and the nodes below them. Each timed update forgets a tree
+  // of the size measured, built untimed just before it. Twenty times as many nodes take about twenty times as long, and the ratio must stay
+  // below 80. When this test was written, forgetting 1,000 nodes took less than the 2 ms floor, which put the ratio at 7 to 11 in all three
+  // browsers; a first version of this code, which forgot each node by searching the nodes below all the others, put it at 280 to 440.
+  const [small = [], large = []] = await timeUpdates(page, id, "forget", [1_000, 20_000], 5);
+  await expect(mirror.locator(`[data-node-id="${id}"]`)).toHaveText("Replaced in round 5");
+  await expect(mirror.locator('[data-node-id="4000000"]')).toHaveCount(0);
+  expect(
+    ratio(large, small),
+    `forgetting 1,000 nodes took ${small.join(" / ")} ms, 20,000 took ${large.join(" / ")} ms`,
+  ).toBeLessThan(80);
   // Many changes below one node on the deepest level: each costs time in proportion to its own size, and the node's flattened text is
   // rebuilt once per update, so 400 changes take about as long as one; rebuilding it after each change made them take 400 times as long.
-  await timeUpdates(page, id, "one-deepest", 1, 1);
-  const one = await timeUpdates(page, id, "changes-below", 1, 3);
-  const many = await timeUpdates(page, id, "changes-below", 400, 3);
-  expect(many / Math.max(one, 1), `1 change took ${one} ms, 400 took ${many} ms`).toBeLessThan(8);
+  const [one = [], many = []] = await timeUpdates(page, id, "change", [1, 400], 3);
+  expect(ratio(many, one), `1 change took ${one.join(" / ")} ms, 400 took ${many.join(" / ")} ms`).toBeLessThan(8);
   // And the changes are there, each in its place among the lines.
   const owner = mirror.locator('[data-node-id="6000000"]');
-  await expect(owner.locator("> div").nth(0)).toHaveText("Changed 0 in round 2");
-  await expect(owner.locator("> div").nth(37)).toHaveText("Changed 37 in round 2");
+  await expect(owner.locator("> div").nth(0)).toHaveText("Changed 0 in round 3");
+  await expect(owner.locator("> div").nth(37)).toHaveText("Changed 37 in round 3");
   await expect(owner.locator("> div").nth(38)).toHaveText("Line 38");
-  await expect(owner.locator("> div").nth(399 * 37)).toHaveText(`Changed ${399 * 37} in round 2`);
+  await expect(owner.locator("> div").nth(399 * 37)).toHaveText(`Changed ${399 * 37} in round 3`);
   await expect(owner.locator("> div")).toHaveCount(20_000);
   expect(await problems()).toEqual([]);
 });
