@@ -49,12 +49,13 @@ export class AccessibilityMirror {
     this.#setCaret(update.caret);
   }
 
-  /** Clears the mirror, for a new session. */
+  /** Clears the mirror, for a new session: no document is open, so the bridge's element holds no text of one either. */
   clear(): void {
     this.#elements.clear();
     this.#editable = undefined;
     this.#caret = null;
     this.#container.replaceChildren(this.#bridge.element);
+    this.#bridge.sync({ name: "", text: "", caret: null });
   }
 
   #setCaret(caret: A11yCaret | null): void {
