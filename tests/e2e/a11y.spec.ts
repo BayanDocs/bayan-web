@@ -303,6 +303,11 @@ async function timeUpdates(
 }
 
 test("updates below the mirror's depth limit take time in proportion to their size", async ({ page }) => {
+  // Most of this test's time goes into building, untimed, the tree that each timed round forgets. There can be fewer of them only with
+  // fewer rounds, and five interleaved rounds are what keep each side's fastest round reliable. A slow runner needs most of the default
+  // time limit for them (on macos-26-intel Firefox took 14.4 s of its 30 s, and Chromium with its processor throttled four times 27.1 s),
+  // so this test gets three times its project's limit.
+  test.slow();
   const problems = await collectProblems(page);
   await keepWorker(page);
   await page.goto("/");
