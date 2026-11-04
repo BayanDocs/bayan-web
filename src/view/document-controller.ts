@@ -59,6 +59,8 @@ export interface DocumentElements {
   readonly overlay: HTMLCanvasElement;
   /** The accessibility mirror's container, inside `extent`. */
   readonly mirror: HTMLElement;
+  /** The button of the offer (spec §12.1, point 3), which React renders while the offer stands and removes when it goes; null without it. */
+  readonly offer: { readonly current: HTMLElement | null };
 }
 
 /** A key press or input event on its way to the engine and back, for the latency measurements of WEB-002 (AC-4). */
@@ -196,12 +198,18 @@ export class DocumentController {
     const client = this.#client;
     const offer = this.#status.offer;
     if (client === undefined || this.#destroyed || this.#stopped || offer === null) return;
+    // The offer goes now. Keyboard focus on its button waits in the document area meanwhile (#setStatus), and goes into the document below.
+    const focusWaits = this.#offerFocused();
     this.#setStatus({ offer: null, message: offer === "reopen" ? "Reopening the document…" : "Opening the document…" });
     void this.#openDocument(client).then((opened) => {
       if (!opened) return;
       this.#setStatus({ message: offer === "reopen" ? "The document was reopened." : "The document was opened." });
-      // The button that was pressed is gone, so keyboard focus fell back to the page: put it in the document, unless it went elsewhere.
-      if (document.activeElement === null || document.activeElement === document.body) this.#bridge.focus();
+      // The button that was pressed is gone: keyboard focus that waited in the document area, or that is on the page, goes into the
+      // document, unless it went elsewhere.
+      const focused = document.activeElement;
+      if (focused === null || focused === document.body || (focusWaits && focused === this.#elements.scroller)) {
+        this.#bridge.focus();
+      }
     });
   }
 
@@ -252,8 +260,18 @@ export class DocumentController {
   }
 
   #setStatus(change: Partial<DocumentStatus>): void {
+    // The offer goes when the user takes it and at the stop (spec §12.1, point 3), and React then removes its button. Keyboard focus on
+    // the button moves to the document area, the "Pages" region, before that: the browser would move it to the page itself, which leaves
+    // a keyboard user nowhere (ADR-0020 decision 5). Not to whatever follows the button either, which the user never chose.
+    if (change.offer === null && this.#offerFocused()) this.#elements.scroller.focus({ preventScroll: true });
     this.#status = { ...this.#status, ...change };
     this.#onStatus(this.#status);
+  }
+
+  /** Whether the offer's button has keyboard focus. */
+  #offerFocused(): boolean {
+    const button = this.#elements.offer.current;
+    return button !== null && button === document.activeElement;
   }
 
   #engineState(state: EngineState, started: number): void {

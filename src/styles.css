@@ -186,6 +186,15 @@ body {
   background: transparent;
 }
 
+/*
+ * Keyboard focus on the pages is drawn inside the scroller's own box: the browsers' default ring lies just outside it, where the stage's
+ * overflow: hidden cuts it off, so that Firefox and WebKit showed none (ADR-0020 decision 5, WCAG 2.4.7).
+ */
+.document-scroller:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
 .document-extent {
   position: relative;
 }
