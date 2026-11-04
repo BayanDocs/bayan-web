@@ -102,6 +102,8 @@ test("the app restarts the engine three times after failures, says so each time,
     await expect(heading).toBeAttached({ timeout: 30_000 });
     await expect(status).toHaveText("The document was reopened.");
     await expect(reopen).toHaveCount(0);
+    // The pressed button is gone; keyboard focus is in the document, not lost.
+    await expect(page.getByRole("textbox", { name: "Editable line" })).toBeFocused();
     expect(await sentSince(page, before)).toContain("doc.open");
   }
 

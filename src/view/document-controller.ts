@@ -192,7 +192,10 @@ export class DocumentController {
     if (client === undefined || this.#destroyed || this.#stopped || !this.#status.reopen) return;
     this.#setStatus({ reopen: false, message: "Reopening the document…" });
     void this.#openDocument(client).then((opened) => {
-      if (opened) this.#setStatus({ message: "The document was reopened." });
+      if (!opened) return;
+      this.#setStatus({ message: "The document was reopened." });
+      // The button that was pressed is gone, so keyboard focus fell back to the page: put it in the document, unless it went elsewhere.
+      if (document.activeElement === null || document.activeElement === document.body) this.#bridge.focus();
     });
   }
 
