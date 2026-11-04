@@ -2,13 +2,18 @@
 // the engine's Rust types and shipped in its WebAssembly package; scripts/check-engine.ts makes sure the package is the pinned one.
 // Type-only: nothing of the package is bundled into the app's own scripts.
 
+import type { ProtocolVersion } from "../../engine-package/engine-protocol.d.ts";
+
 export type * from "../../engine-package/engine-protocol.d.ts";
 
 /** Bayan Layout Units per device-independent (CSS) pixel at zoom 1: 1/96 inch (spec §7, ADR-0005). */
 export const BLU_PER_DIP = 19_050;
 
-/** The protocol version this shell speaks (spec §5). */
-export const PROTOCOL_VERSION = 0;
+/**
+ * The protocol version this shell speaks (spec §5), typed with the package's generated ProtocolVersion: an engine package for another
+ * protocol version fails the type check here, instead of the app speaking a version its code was not written for.
+ */
+export const PROTOCOL_VERSION: ProtocolVersion = 0;
 
 /** The largest tile side the engine renders, in pixels (spec §13). */
 export const MAX_TILE_SIDE = 4096;

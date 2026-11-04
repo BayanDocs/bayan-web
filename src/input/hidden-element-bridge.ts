@@ -51,6 +51,8 @@ export class HiddenElementBridge implements InputBridge {
     element.autocomplete = "off";
     element.setAttribute("autocorrect", "off");
     element.setAttribute("autocapitalize", "off");
+    // For the same reason, no page translation either: the browser's translator would send the document's text to its service.
+    element.setAttribute("translate", "no");
     element.dataset["bridge"] = this.kind;
     this.element = element;
     const signal = this.#abort.signal;

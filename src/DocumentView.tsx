@@ -50,9 +50,15 @@ export function DocumentView() {
         <Button className="tool-button" onPress={() => controller.current?.zoomIn()} isDisabled={zoom >= maxZoom}>
           Zoom in
         </Button>
+        {/* A live region: screen readers announce each new message, such as the engine's restarts (spec §12.1), wherever focus is. */}
         <p className="document-status" role="status">
           {status?.message ?? ""}
         </p>
+        {status?.offer ? (
+          <Button className="tool-button" onPress={() => controller.current?.reopen()}>
+            {status.offer === "reopen" ? "Reopen the document" : "Open the document"}
+          </Button>
+        ) : null}
       </div>
       <div className="document-stage">
         {/* The pixels are for eyes only; assistive technology reads the accessibility mirror inside the scroller. */}
