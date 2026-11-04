@@ -14,8 +14,9 @@
 // rebuilt at most once per update for the changes below it. Nothing but the engine's message limit (16 MiB, spec §13) bounds the size of a
 // tree yet, so a very large tree still takes time in proportion to its size.
 //
-// The mirror is also marked translate="no": a browser's page translation would otherwise send the document's text to a translation
-// service, which is why the input bridges switch off spell checking too.
+// While no document is open the input bridge's element is inert, out of the tab order and the accessibility tree, so that it is never a
+// text box with no name and no text. The mirror is also marked translate="no": a browser's page translation would otherwise send the
+// document's text to a translation service, which is why the input bridges switch off spell checking too.
 
 import type { A11yCaret, A11yNode, A11yTree, A11yUpdate } from "../engine/protocol.ts";
 import type { InputBridge } from "../input/bridge.ts";
@@ -68,6 +69,7 @@ export class AccessibilityMirror {
       // A document without editable text still needs a place for keyboard focus.
       this.#container.append(this.#bridge.element);
     }
+    this.#bridge.element.inert = false;
     this.#setCaret(tree.caret);
   }
 
@@ -103,12 +105,13 @@ export class AccessibilityMirror {
     this.#setCaret(update.caret);
   }
 
-  /** Clears the mirror, for a new session: no document is open, so the bridge's element holds no text of one either. */
+  /** Clears the mirror, for a new session: no document is open, so the bridge's element holds no text of one and takes no focus. */
   clear(): void {
     this.#forgetAll();
     this.#caret = null;
     this.#container.replaceChildren(this.#bridge.element);
     this.#bridge.sync({ name: "", text: "", caret: null });
+    this.#bridge.element.inert = true;
   }
 
   #setCaret(caret: A11yCaret | null): void {

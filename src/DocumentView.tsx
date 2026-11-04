@@ -54,9 +54,9 @@ export function DocumentView() {
         <p className="document-status" role="status">
           {status?.message ?? ""}
         </p>
-        {status?.reopen === true ? (
+        {status?.offer ? (
           <Button className="tool-button" onPress={() => controller.current?.reopen()}>
-            Reopen the document
+            {status.offer === "reopen" ? "Reopen the document" : "Open the document"}
           </Button>
         ) : null}
       </div>

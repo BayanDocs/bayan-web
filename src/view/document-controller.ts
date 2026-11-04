@@ -37,8 +37,11 @@ export interface DocumentStatus {
   readonly engine: "starting" | "ready" | "failed";
   /** A short message for people, in the shell's own words; never document content, and never text from the engine. */
   readonly message: string;
-  /** Whether to offer to reopen the document: the engine was restarted after a failure and closed it (spec §12.1). */
-  readonly reopen: boolean;
+  /**
+   * What to offer after the engine was restarted (spec §12.1, point 3): to reopen the document a failure closed, or to open it if a failure
+   * came before it was ever open; null when there is nothing to offer. The offer stays through further failures and goes at the stop.
+   */
+  readonly offer: "reopen" | "open" | null;
   readonly zoom: number;
   readonly bridge: InputBridge["kind"];
 }
@@ -107,6 +110,8 @@ export class DocumentController {
   #session = 0;
   /** The engine failed too often, or its worker stopped: no session is started any more. */
   #stopped = false;
+  /** A document is being opened (doc.open to query.a11y): a failure now closes it as much as one that is open. */
+  #opening = false;
 
   constructor(elements: DocumentElements, onStatus: (status: DocumentStatus) => void) {
     this.#elements = elements;
@@ -129,7 +134,7 @@ export class DocumentController {
     this.#status = {
       engine: "starting",
       message: "Starting the engine…",
-      reopen: false,
+      offer: null,
       zoom: 1,
       bridge: this.#bridge.kind,
     };
@@ -186,14 +191,15 @@ export class DocumentController {
     if (await this.#startSession(client)) await this.#openDocument(client);
   }
 
-  /** Reopens the document after a restart closed it, when the user asks for it (spec §12.1, point 3). */
+  /** Takes the offer: opens the document a failure closed, or the one a failure kept from opening, when the user asks (spec §12.1). */
   reopen(): void {
     const client = this.#client;
-    if (client === undefined || this.#destroyed || this.#stopped || !this.#status.reopen) return;
-    this.#setStatus({ reopen: false, message: "Reopening the document…" });
+    const offer = this.#status.offer;
+    if (client === undefined || this.#destroyed || this.#stopped || offer === null) return;
+    this.#setStatus({ offer: null, message: offer === "reopen" ? "Reopening the document…" : "Opening the document…" });
     void this.#openDocument(client).then((opened) => {
       if (!opened) return;
-      this.#setStatus({ message: "The document was reopened." });
+      this.#setStatus({ message: offer === "reopen" ? "The document was reopened." : "The document was opened." });
       // The button that was pressed is gone, so keyboard focus fell back to the page: put it in the document, unless it went elsewhere.
       if (document.activeElement === null || document.activeElement === document.body) this.#bridge.focus();
     });
@@ -260,7 +266,7 @@ export class DocumentController {
       this.#forgetSession();
       this.#setStatus({
         engine: "failed",
-        reopen: false,
+        offer: null,
         message: "The engine stopped. Reload the page to start it again.",
       });
     }
@@ -275,6 +281,9 @@ export class DocumentController {
     const recoverable =
       typeof payload === "object" && payload !== null && "recoverable" in payload && payload.recoverable === true;
     if (recoverable || this.#destroyed || this.#stopped) return;
+    // What the failure closed decides what the message says and what is offered (spec §12.1, points 2 and 3).
+    const closed = this.#docId !== null || this.#opening;
+    const offer = closed || this.#status.offer === "reopen" ? "reopen" : "open";
     this.#forgetSession();
     const restart = this.#restarts.take();
     if (restart === null) {
@@ -282,26 +291,38 @@ export class DocumentController {
       client.terminate();
       this.#setStatus({
         engine: "failed",
-        reopen: false,
+        offer: null,
         message: "The engine stopped working again, so it was not restarted. Reload the page to start it again.",
       });
       return;
     }
+    const documentState = closed
+      ? "The document was closed and can be reopened."
+      : offer === "reopen"
+        ? "The document is still closed and can be reopened."
+        : "The document can be opened now.";
     this.#setStatus({
-      reopen: true,
-      message: `The engine stopped working and was restarted (${restart} of ${maxRestarts}). The document was closed and can be reopened.`,
+      offer,
+      message: `The engine stopped working and was restarted (${restart} of ${maxRestarts}). ${documentState}`,
     });
     void this.#startSession(client);
   }
 
   /** Forgets the session's document: replies and events that still arrive for it are dropped (spec §12.1, point 4). */
   #forgetSession(): void {
+    // Keyboard focus that was in the document stays in the document area, the "Pages" region, when the document goes (spec §12.1,
+    // point 3): not on the page, and never on the offer to reopen, which a key the user meant for the document would then accept.
+    const scroller = this.#elements.scroller;
+    const focused = document.activeElement;
+    const keepFocus = focused !== null && focused !== scroller && scroller.contains(focused);
     this.#session += 1;
     this.#docId = null;
+    this.#opening = false;
     this.#probes = [];
     this.#compositor.reset();
     this.#setPages([]);
     this.#mirror.clear();
+    if (keepFocus) scroller.focus({ preventScroll: true });
   }
 
   /** hello and ui.manifest: a new session (spec §5). Resolves with whether it started and is still the current one. */
@@ -329,6 +350,8 @@ export class DocumentController {
   /** doc.open, view.set and query.a11y: opens the mock document in the current session (spec §11). Resolves with whether it opened. */
   async #openDocument(client: EngineClient): Promise<boolean> {
     const session = this.#session;
+    this.#opening = true;
+    let panicked = false;
     try {
       // v0 opens its mock document whatever the bytes are (spec §6.1).
       const file = new ArrayBuffer(0);
@@ -343,10 +366,14 @@ export class DocumentController {
       this.#placeBridge();
       return true;
     } catch (error) {
-      if (session === this.#session && !this.#destroyed && !isPanic(error)) {
+      panicked = isPanic(error);
+      if (session === this.#session && !this.#destroyed && !panicked) {
         this.#setStatus({ message: "The document could not be opened." });
       }
       return false;
+    } finally {
+      // The engine.error of a panic comes just after its reply (spec §12.1, point 4): until then, the document is still being opened.
+      if (session === this.#session && !panicked) this.#opening = false;
     }
   }
 
