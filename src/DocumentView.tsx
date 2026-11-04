@@ -13,6 +13,7 @@ export function DocumentView() {
   const tiles = useRef<HTMLCanvasElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
+  const offer = useRef<HTMLButtonElement>(null);
   const controller = useRef<DocumentController | null>(null);
   const [status, setStatus] = useState<DocumentStatus | null>(null);
 
@@ -25,6 +26,7 @@ export function DocumentView() {
         tiles: tiles.current,
         overlay: overlay.current,
         mirror: mirror.current,
+        offer,
       },
       setStatus,
     );
@@ -54,8 +56,10 @@ export function DocumentView() {
         <p className="document-status" role="status">
           {status?.message ?? ""}
         </p>
+        {/* The offer goes when the user takes it and at the stop; if this button has keyboard focus then, the controller first moves focus
+            to the "Pages" region, before React removes the button (spec §12.1, point 3). */}
         {status?.offer ? (
-          <Button className="tool-button" onPress={() => controller.current?.reopen()}>
+          <Button ref={offer} className="tool-button" onPress={() => controller.current?.reopen()}>
             {status.offer === "reopen" ? "Reopen the document" : "Open the document"}
           </Button>
         ) : null}

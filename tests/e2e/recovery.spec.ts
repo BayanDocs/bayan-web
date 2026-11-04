@@ -4,13 +4,14 @@ import { collectProblems } from "./collect-problems.ts";
 // The recovery policy of engine protocol §12.1, against the real engine: after an unrecoverable engine.error the app starts a new session at
 // most three times in ten minutes (src/engine/recovery.ts; tests/unit/recovery.test.ts checks the ten minutes), says so each time in its
 // status live region, which screen readers announce, never reopens the document unless the user asks, keeps keyboard focus in the
-// document area, and at the fourth failure stops.
+// document area, also when the offer to reopen goes while its button has focus, and at the fourth failure stops.
 //
 // The engine panics on diag.panic only when its configuration's test switch test.allow_panic is on (spec §3.3, §6.7), which the app never
 // turns on. Before the app starts, these tests wrap Worker.prototype.postMessage: the wrapper adds the switch to the worker host's init
 // message, records the type of every message the app sends, keeps the worker so that a test can send diag.panic itself, and can turn the
-// app's own requests of one type into diag.panic with the same id, so that the engine fails while handling them and answers the app's
-// request with the error panic, as a document that makes the engine panic when it opens would.
+// app's own requests of one type (from the start, or from a point the test chooses) into diag.panic with the same id, so that the engine
+// fails while handling them and answers the app's request with the error panic, as a document that makes the engine panic when it opens
+// would.
 
 interface Traffic {
   /** The type of every protocol message sent to the worker, in order, as the app sent it, and the test's own diag.panic. */
@@ -33,6 +34,8 @@ async function enablePanics(page: Page, failing: Failing | null = null): Promise
     const traffic = { sent: [] as string[], welcomes: 0, failures: 0, statuses: [] as string[] };
     let engineWorker: Worker | undefined;
     let failed = 0;
+    /** The type of the app's next request that the engine is to fail on, set by failNext(). */
+    let failNext: string | null = null;
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
       const envelope = message as { worker?: unknown; type?: unknown; id?: unknown } | null;
@@ -46,8 +49,10 @@ async function enablePanics(page: Page, failing: Failing | null = null): Promise
         return Reflect.apply(post, this, [{ ...envelope, config: { test: { allow_panic: true } } }, transfer]);
       }
       if (typeof envelope?.type === "string") traffic.sent.push(envelope.type);
-      if (fail !== null && envelope?.type === fail.type && (fail.times === null || failed < fail.times)) {
-        failed += 1;
+      const next = failNext !== null && envelope?.type === failNext;
+      if (next) failNext = null;
+      if (next || (fail !== null && envelope?.type === fail.type && (fail.times === null || failed < fail.times))) {
+        if (!next) failed += 1;
         // The same id, so that the engine's error panic answers the app's own request; the transfer list still moves any blob.
         return Reflect.apply(post, this, [{ v: 0, id: envelope.id, type: "diag.panic" }, transfer]);
       }
@@ -61,6 +66,15 @@ async function enablePanics(page: Page, failing: Failing | null = null): Promise
       __traffic: traffic,
       // Without an id, so the app's requests and their identifiers are untouched; the engine answers with engine.error only.
       __panic: () => engineWorker?.postMessage({ v: 0, type: "diag.panic" }),
+      __failNext: (type: string) => {
+        failNext = type;
+      },
+      // The worker host's own report when it cannot replace the engine after a panic (spec §3.2), handed to the app as if it came from
+      // the worker; see workerFails().
+      __workerFails: () =>
+        engineWorker?.dispatchEvent(
+          new MessageEvent("message", { data: { worker: "failed", reason: "restart_failed" } }),
+        ),
     });
   }, failing);
 }
@@ -79,6 +93,27 @@ async function panic(page: Page): Promise<number> {
   return before;
 }
 
+/**
+ * Makes the engine fail on the app's next request of type `type`, which goes to the engine as diag.panic with the same id (see
+ * enablePanics): the engine fails while it handles exactly that request, whatever the timing.
+ */
+async function failNext(page: Page, type: string): Promise<void> {
+  await page.evaluate(
+    (next) => (globalThis as unknown as { __failNext: (type: string) => void }).__failNext(next),
+    type,
+  );
+}
+
+/**
+ * Makes the worker fail for good, as when its host cannot replace the engine after a panic: the app reads the host's report
+ * { worker: "failed", reason: "restart_failed" } (spec §3.2) and stops (§12.1, point 1). The real host sends it only when creating the new
+ * engine instance throws, which nothing a test sends can cause, and the engine package is served unchanged; so the test hands the app that
+ * report itself, through the worker's own message event, and everything from there on is the app's real handling of it.
+ */
+async function workerFails(page: Page): Promise<void> {
+  await page.evaluate(() => (globalThis as unknown as { __workerFails: () => void }).__workerFails());
+}
+
 /** The types of the messages sent since `before` messages had been sent. */
 async function sentSince(page: Page, before: number): Promise<string[]> {
   return (await traffic(page)).sent.slice(before);
@@ -93,6 +128,7 @@ const closed = "The document was closed and can be reopened.";
 const stillClosed = "The document is still closed and can be reopened.";
 const notOpened = "The document can be opened now.";
 const stopped = "The engine stopped working again, so it was not restarted. Reload the page to start it again.";
+const workerStopped = "The engine stopped. Reload the page to start it again.";
 const couldNotOpen = "The document could not be opened.";
 
 /** The elements the tests look at. */
@@ -115,6 +151,19 @@ async function focusTheDocument(page: Page): Promise<void> {
   const box = await scroller.boundingBox();
   await scroller.click({ position: { x: (box?.width ?? 800) / 2, y: 80 } });
   await expect(view(page).editable).toBeFocused();
+}
+
+/**
+ * Moves keyboard focus from the "Pages" region to the offer, the control just before it, as a keyboard user would: with Shift+Tab, or in
+ * WebKit, which like Safari skips buttons on plain Tab unless Full Keyboard Access is on, with Alt+Shift+Tab (see tests/e2e/smoke.spec.ts).
+ */
+async function focusTheOffer(page: Page, browserName: string): Promise<void> {
+  const { pages, reopen } = view(page);
+  await expect(pages).toBeFocused();
+  await page.keyboard.press(browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab");
+  await expect(reopen).toBeFocused();
+  // Focus that came from the keyboard is shown (ADR-0020 decision 5).
+  await expect(reopen).toHaveAttribute("data-focus-visible", "true");
 }
 
 /**
@@ -291,5 +340,97 @@ test("a document that makes the engine fail whenever it opens is opened once and
   expect(statuses).not.toContain(couldNotOpen);
   const announced = statuses.filter((text) => text.startsWith("The engine stopped working"));
   expect(announced).toEqual([restarted(1, closed), restarted(2, closed), restarted(3, closed), stopped]);
+  expect(await problems()).toEqual([]);
+});
+
+// The offer's button disappears with the offer. If it had keyboard focus, the browser would move focus to the page itself (<body>), which
+// leaves a keyboard user nowhere; the app moves it to the document area, the "Pages" region, first (ADR-0020 decision 5). The next three
+// tests cover each way the offer goes while its button has focus: the stop, the worker's failure, and the user taking the offer.
+
+test('keyboard focus on the offer goes to the "Pages" region, not to the page, when the offer goes at the stop', async ({
+  page,
+  browserName,
+}) => {
+  const problems = await collectProblems(page);
+  await enablePanics(page);
+  await page.goto("/");
+  const { state, status, reopen, heading, pages } = view(page);
+  await expect(heading).toBeAttached({ timeout: 30_000 });
+  await focusTheDocument(page);
+  await panic(page);
+  await expect(status).toHaveText(restarted(1, closed));
+  await focusTheOffer(page, browserName);
+  // Failures while the offer has keyboard focus: the offer stays, and so does focus.
+  for (const restart of [2, 3]) {
+    await expect.poll(async () => (await traffic(page)).welcomes).toBe(restart);
+    await panic(page);
+    await expect(status).toHaveText(restarted(restart, stillClosed));
+    await expect(reopen).toBeFocused();
+  }
+  // The fourth failure stops the app, and the offer goes.
+  await expect.poll(async () => (await traffic(page)).welcomes).toBe(4);
+  await panic(page);
+  await expect(status).toHaveText(stopped);
+  await expect(state).toHaveAttribute("data-engine-state", "failed");
+  await expect(reopen).toHaveCount(0);
+  await expect(pages).toBeFocused();
+  expect(await problems()).toEqual([]);
+});
+
+test('keyboard focus on the offer goes to the "Pages" region, not to the page, when the worker fails', async ({
+  page,
+  browserName,
+}) => {
+  const problems = await collectProblems(page);
+  await enablePanics(page);
+  await page.goto("/");
+  const { state, status, reopen, heading, pages } = view(page);
+  await expect(heading).toBeAttached({ timeout: 30_000 });
+  await focusTheDocument(page);
+  await panic(page);
+  await expect(status).toHaveText(restarted(1, closed));
+  await expect.poll(async () => (await traffic(page)).welcomes).toBe(2);
+  await focusTheOffer(page, browserName);
+  // Nothing can restart a worker that failed (spec §12.1, point 1): the app stops, and the offer goes.
+  await workerFails(page);
+  await expect(status).toHaveText(workerStopped);
+  await expect(state).toHaveAttribute("data-engine-state", "failed");
+  await expect(reopen).toHaveCount(0);
+  await expect(pages).toBeFocused();
+  await expectNoTextBox(page);
+  expect(await problems()).toEqual([]);
+});
+
+test('taking the offer from the keyboard keeps focus in the "Pages" region until the document is open, also if it fails again', async ({
+  page,
+  browserName,
+}) => {
+  const problems = await collectProblems(page);
+  await enablePanics(page);
+  await page.goto("/");
+  const { status, reopen, heading, pages, editable } = view(page);
+  await expect(heading).toBeAttached({ timeout: 30_000 });
+  await focusTheDocument(page);
+  await panic(page);
+  await expect(status).toHaveText(restarted(1, closed));
+  await expect.poll(async () => (await traffic(page)).welcomes).toBe(2);
+  await focusTheOffer(page, browserName);
+  // Enter takes the offer, which goes, and the engine fails on the app's doc.open, so the offer comes back while the document is still
+  // being reopened. Keyboard focus waited in the document area, and is still there.
+  await failNext(page, "doc.open");
+  await page.keyboard.press("Enter");
+  await expect(status).toHaveText(restarted(2, closed));
+  await expect(reopen).toBeVisible();
+  await expect(heading).toHaveCount(0);
+  await expect(pages).toBeFocused();
+  // Taken again, the document opens this time, and keyboard focus goes into it.
+  await expect.poll(async () => (await traffic(page)).welcomes).toBe(3);
+  await focusTheOffer(page, browserName);
+  await page.keyboard.press("Enter");
+  await expect(heading).toBeAttached({ timeout: 30_000 });
+  await expect(status).toHaveText("The document was reopened.");
+  await expect(reopen).toHaveCount(0);
+  await expect(editable).toBeFocused();
+  expect((await traffic(page)).statuses).not.toContain(couldNotOpen);
   expect(await problems()).toEqual([]);
 });
