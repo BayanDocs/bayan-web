@@ -224,3 +224,104 @@ test("a tree deeper than the mirror's limit becomes lines of text below the limi
     .toBe("ok");
   expect(await problems()).toEqual([]);
 });
+
+/**
+ * The updates the timing test hands the app, built in the page: `many-deepest` replaces the last paragraph (level 2) with a chain down to
+ * level 63 whose node there has `n` children on level 64, the mirror's deepest level, each with one child below it; `one-deepest` replaces
+ * it with a chain to a single node on level 64 with 20,000 children below it; and `changes-below` changes `n` of those children.
+ */
+type UpdateShape = "many-deepest" | "one-deepest" | "changes-below";
+
+/**
+ * Hands the app an a11y.update of shape `shape` as the engine would send it, `rounds` times, each built afresh, and returns the fastest time
+ * the mirror took, in milliseconds: the update is applied synchronously while the event is dispatched. The fastest of several rounds keeps
+ * garbage collection and other noise out of the comparison.
+ */
+async function timeUpdates(
+  page: Page,
+  paragraph: number,
+  shape: UpdateShape,
+  n: number,
+  rounds: number,
+): Promise<number> {
+  return page.evaluate(
+    ({ paragraph, shape, n, rounds }) => {
+      interface Node {
+        id: number;
+        role: string;
+        text?: string;
+        children?: Node[];
+      }
+      const chainDownTo = (deepest: Node, level: number): Node => {
+        let node = deepest;
+        for (let above = level - 1; above >= 2; above -= 1) {
+          node = { id: above === 2 ? paragraph : 3_000_000 + above, role: "paragraph", children: [node] };
+        }
+        return node;
+      };
+      const changes = (round: number): { kind: string; node: Node }[] => {
+        if (shape === "many-deepest") {
+          const parent: Node = { id: 3_000_063, role: "paragraph", children: [] };
+          for (let i = 0; i < n; i += 1) {
+            const below: Node = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i} in round ${round}` };
+            parent.children?.push({ id: 4_000_000 + i, role: "paragraph", text: `Owner ${i}`, children: [below] });
+          }
+          return [{ kind: "replace", node: chainDownTo(parent, 63) }];
+        }
+        if (shape === "one-deepest") {
+          const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
+          for (let i = 0; i < 20_000; i += 1)
+            owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
+          return [{ kind: "replace", node: chainDownTo(owner, 64) }];
+        }
+        return Array.from({ length: n }, (_, i) => ({
+          kind: "replace",
+          node: { id: 7_000_000 + i * 37, role: "paragraph", text: `Changed ${i * 37} in round ${round}` },
+        }));
+      };
+      const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
+      let fastest = Number.POSITIVE_INFINITY;
+      for (let round = 0; round < rounds; round += 1) {
+        const payload = { doc_id: scope.__docId, changes: changes(round), caret: null };
+        const event = new MessageEvent("message", {
+          data: { v: 0, type: "a11y.update", seq: 2_000_000 + round, payload },
+        });
+        const start = performance.now();
+        scope.__engineWorker.dispatchEvent(event);
+        fastest = Math.min(fastest, performance.now() - start);
+      }
+      return fastest;
+    },
+    { paragraph, shape, n, rounds },
+  );
+}
+
+test("updates below the mirror's depth limit take time in proportion to their size", async ({ page }) => {
+  const problems = await collectProblems(page);
+  await keepWorker(page);
+  await page.goto("/");
+  await waitForDocument(page);
+  const mirror = page.getByTestId("a11y-mirror");
+  const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
+  expect(id).toBeGreaterThan(0);
+  // Replacing the ancestor of many nodes on the deepest level forgets them all and builds them again. Ten times as many must take about ten
+  // times as long; forgetting each of them by searching all the others (the code before this test) made it a hundred times as long.
+  const small = await timeUpdates(page, id, "many-deepest", 2_000, 3);
+  const large = await timeUpdates(page, id, "many-deepest", 20_000, 3);
+  await expect(mirror.getByText("Below 19999 in round 2")).toBeAttached();
+  expect(large / Math.max(small, 1), `2,000 nodes took ${small} ms, 20,000 took ${large} ms`).toBeLessThan(30);
+  // Many changes below one node on the deepest level: each costs time in proportion to its own size, and the node's flattened text is
+  // rebuilt once per update, so 400 changes take about as long as one; rebuilding it after each change made them take 400 times as long.
+  await timeUpdates(page, id, "one-deepest", 1, 1);
+  const one = await timeUpdates(page, id, "changes-below", 1, 3);
+  const many = await timeUpdates(page, id, "changes-below", 400, 3);
+  expect(many / Math.max(one, 1), `1 change took ${one} ms, 400 took ${many} ms`).toBeLessThan(8);
+  // And the changes are there, each in its place among the lines.
+  const owner = mirror.locator('[data-node-id="6000000"]');
+  await expect(owner.locator("> div").nth(0)).toHaveText("Changed 0 in round 2");
+  await expect(owner.locator("> div").nth(37)).toHaveText("Changed 37 in round 2");
+  await expect(owner.locator("> div").nth(38)).toHaveText("Line 38");
+  await expect(owner.locator("> div").nth(399 * 37)).toHaveText(`Changed ${399 * 37} in round 2`);
+  await expect(owner.locator("> div")).toHaveCount(20_000);
+  expect(await problems()).toEqual([]);
+});
