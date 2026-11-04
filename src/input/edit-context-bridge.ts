@@ -43,6 +43,8 @@ export class EditContextBridge implements InputBridge {
     element.spellcheck = false;
     element.setAttribute("autocorrect", "off");
     element.setAttribute("autocapitalize", "off");
+    // For the same reason, no page translation either: the browser's translator would send the document's text to its service.
+    element.setAttribute("translate", "no");
     element.dataset["bridge"] = this.kind;
     this.#text = document.createTextNode("");
     element.append(this.#text);
