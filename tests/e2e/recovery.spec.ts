@@ -69,12 +69,6 @@ async function enablePanics(page: Page, failing: Failing | null = null): Promise
       __failNext: (type: string) => {
         failNext = type;
       },
-      // The worker host's own report when it cannot replace the engine after a panic (spec §3.2), handed to the app as if it came from
-      // the worker; see workerFails().
-      __workerFails: () =>
-        engineWorker?.dispatchEvent(
-          new MessageEvent("message", { data: { worker: "failed", reason: "restart_failed" } }),
-        ),
     });
   }, failing);
 }
@@ -105,13 +99,21 @@ async function failNext(page: Page, type: string): Promise<void> {
 }
 
 /**
- * Makes the worker fail for good, as when its host cannot replace the engine after a panic: the app reads the host's report
- * { worker: "failed", reason: "restart_failed" } (spec §3.2) and stops (§12.1, point 1). The real host sends it only when creating the new
- * engine instance throws, which nothing a test sends can cause, and the engine package is served unchanged; so the test hands the app that
- * report itself, through the worker's own message event, and everything from there on is the app's real handling of it.
+ * Makes the worker host unable to replace the engine after its next panic, so that the host itself reports
+ * { worker: "failed", reason: "restart_failed" } (spec §3.2) and the app stops (§12.1, point 1). The host's restart() creates the new
+ * instance through the glue's __wbg_reset_state(), which calls new WebAssembly.Instance(); the test replaces that constructor, inside the
+ * engine's worker only, with one that throws. The engine package's files are served unchanged.
  */
-async function workerFails(page: Page): Promise<void> {
-  await page.evaluate(() => (globalThis as unknown as { __workerFails: () => void }).__workerFails());
+async function breakEngineRestarts(page: Page): Promise<void> {
+  const engine = page.workers().find((worker) => worker.url().includes("bayan-worker.js"));
+  if (engine === undefined) throw new Error("The engine's worker is not running.");
+  await engine.evaluate(() => {
+    WebAssembly.Instance = class {
+      constructor() {
+        throw new Error("A test made the engine's replacement fail.");
+      }
+    } as unknown as typeof WebAssembly.Instance;
+  });
 }
 
 /** The types of the messages sent since `before` messages had been sent. */
@@ -164,6 +166,31 @@ async function focusTheOffer(page: Page, browserName: string): Promise<void> {
   await expect(reopen).toBeFocused();
   // Focus that came from the keyboard is shown (ADR-0020 decision 5).
   await expect(reopen).toHaveAttribute("data-focus-visible", "true");
+}
+
+/**
+ * Checks that the "Pages" region has keyboard focus and shows it: its focus ring is drawn (a style other than none, a width above 0, a colour
+ * that is not transparent) and lies inside its own box, inward of its edge by at least its width, where the stage's overflow: hidden cannot
+ * cut it off (src/styles.css). The browsers' default ring lies outside the box, and Firefox and WebKit then show none.
+ */
+async function expectVisibleFocusOnThePages(page: Page): Promise<void> {
+  const { pages } = view(page);
+  await expect(pages).toBeFocused();
+  const ring = await pages.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      focusVisible: element.matches(":focus-visible"),
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+      offset: Number.parseFloat(style.outlineOffset),
+      color: style.outlineColor,
+    };
+  });
+  expect(ring.focusVisible).toBe(true);
+  expect(ring.style).not.toBe("none");
+  expect(ring.width).toBeGreaterThan(0);
+  expect(ring.offset).toBeLessThanOrEqual(-ring.width);
+  expect(ring.color).not.toMatch(/^transparent$|^rgba\(.*,\s*0\)$/);
 }
 
 /**
@@ -344,8 +371,9 @@ test("a document that makes the engine fail whenever it opens is opened once and
 });
 
 // The offer's button disappears with the offer. If it had keyboard focus, the browser would move focus to the page itself (<body>), which
-// leaves a keyboard user nowhere; the app moves it to the document area, the "Pages" region, first (ADR-0020 decision 5). The next three
-// tests cover each way the offer goes while its button has focus: the stop, the worker's failure, and the user taking the offer.
+// leaves a keyboard user nowhere; the app moves it to the document area, the "Pages" region, first, and the region shows it (ADR-0020
+// decision 5). The next three tests cover each way the offer goes while its button has focus: the stop, the worker's failure, and the user
+// taking the offer; the fourth checks that focus anywhere else stays where it is.
 
 test('keyboard focus on the offer goes to the "Pages" region, not to the page, when the offer goes at the stop', async ({
   page,
@@ -354,7 +382,7 @@ test('keyboard focus on the offer goes to the "Pages" region, not to the page, w
   const problems = await collectProblems(page);
   await enablePanics(page);
   await page.goto("/");
-  const { state, status, reopen, heading, pages } = view(page);
+  const { state, status, reopen, heading } = view(page);
   await expect(heading).toBeAttached({ timeout: 30_000 });
   await focusTheDocument(page);
   await panic(page);
@@ -373,7 +401,7 @@ test('keyboard focus on the offer goes to the "Pages" region, not to the page, w
   await expect(status).toHaveText(stopped);
   await expect(state).toHaveAttribute("data-engine-state", "failed");
   await expect(reopen).toHaveCount(0);
-  await expect(pages).toBeFocused();
+  await expectVisibleFocusOnThePages(page);
   expect(await problems()).toEqual([]);
 });
 
@@ -384,19 +412,21 @@ test('keyboard focus on the offer goes to the "Pages" region, not to the page, w
   const problems = await collectProblems(page);
   await enablePanics(page);
   await page.goto("/");
-  const { state, status, reopen, heading, pages } = view(page);
+  const { state, status, reopen, heading } = view(page);
   await expect(heading).toBeAttached({ timeout: 30_000 });
   await focusTheDocument(page);
   await panic(page);
   await expect(status).toHaveText(restarted(1, closed));
   await expect.poll(async () => (await traffic(page)).welcomes).toBe(2);
   await focusTheOffer(page, browserName);
-  // Nothing can restart a worker that failed (spec §12.1, point 1): the app stops, and the offer goes.
-  await workerFails(page);
+  // The next panic makes the worker host fail to replace the engine, and the host reports restart_failed. Nothing can restart a worker
+  // that failed (spec §12.1, point 1): the app stops, and the offer goes.
+  await breakEngineRestarts(page);
+  await panic(page);
   await expect(status).toHaveText(workerStopped);
   await expect(state).toHaveAttribute("data-engine-state", "failed");
   await expect(reopen).toHaveCount(0);
-  await expect(pages).toBeFocused();
+  await expectVisibleFocusOnThePages(page);
   await expectNoTextBox(page);
   expect(await problems()).toEqual([]);
 });
@@ -408,7 +438,7 @@ test('taking the offer from the keyboard keeps focus in the "Pages" region until
   const problems = await collectProblems(page);
   await enablePanics(page);
   await page.goto("/");
-  const { status, reopen, heading, pages, editable } = view(page);
+  const { status, reopen, heading, editable } = view(page);
   await expect(heading).toBeAttached({ timeout: 30_000 });
   await focusTheDocument(page);
   await panic(page);
@@ -422,7 +452,7 @@ test('taking the offer from the keyboard keeps focus in the "Pages" region until
   await expect(status).toHaveText(restarted(2, closed));
   await expect(reopen).toBeVisible();
   await expect(heading).toHaveCount(0);
-  await expect(pages).toBeFocused();
+  await expectVisibleFocusOnThePages(page);
   // Taken again, the document opens this time, and keyboard focus goes into it.
   await expect.poll(async () => (await traffic(page)).welcomes).toBe(3);
   await focusTheOffer(page, browserName);
@@ -432,5 +462,33 @@ test('taking the offer from the keyboard keeps focus in the "Pages" region until
   await expect(reopen).toHaveCount(0);
   await expect(editable).toBeFocused();
   expect((await traffic(page)).statuses).not.toContain(couldNotOpen);
+  expect(await problems()).toEqual([]);
+});
+
+test("keyboard focus on another control stays where it is when the offer goes", async ({ page, browserName }) => {
+  const problems = await collectProblems(page);
+  await enablePanics(page);
+  await page.goto("/");
+  const { state, status, reopen, heading } = view(page);
+  const zoomIn = page.getByRole("button", { name: "Zoom in" });
+  await expect(heading).toBeAttached({ timeout: 30_000 });
+  await focusTheDocument(page);
+  await panic(page);
+  await expect(status).toHaveText(restarted(1, closed));
+  await focusTheOffer(page, browserName);
+  // One control further back is "Zoom in": the user chose it, and the offer's going is no reason to move focus away from it.
+  await page.keyboard.press(browserName === "webkit" ? "Alt+Shift+Tab" : "Shift+Tab");
+  await expect(zoomIn).toBeFocused();
+  for (const restart of [2, 3]) {
+    await expect.poll(async () => (await traffic(page)).welcomes).toBe(restart);
+    await panic(page);
+    await expect(status).toHaveText(restarted(restart, stillClosed));
+  }
+  await expect.poll(async () => (await traffic(page)).welcomes).toBe(4);
+  await panic(page);
+  await expect(status).toHaveText(stopped);
+  await expect(state).toHaveAttribute("data-engine-state", "failed");
+  await expect(reopen).toHaveCount(0);
+  await expect(zoomIn).toBeFocused();
   expect(await problems()).toEqual([]);
 });
