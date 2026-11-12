@@ -2,6 +2,13 @@
 # (the nightly run re-checks the audit against newly published advisories, ADR-0017 §7).
 # Workflow conventions (ADR-0017, X-002): no permissions by default, actions pinned to full commit SHAs with the version in a comment,
 # no persisted credentials, timeouts and a concurrency group on every job, and every tool installed at a pinned, checksum-verified version.
+# The Ubuntu entry of the verify job runs in a container from the base image that deps/ubuntu-packages.lock pins by digest (X-005; ADR-0017,
+# amendment of 2026-11-05), so that a newer runner image cannot break the install of the browsers' libraries. scripts/ubuntu-packages.sh puts
+# the package files that the lock lists into a folder, each from the cache or else from the snapshot of Ubuntu's archive, Launchpad or the
+# live archive, checked against the lock's size and SHA-256, and then installs them with dpkg in apt's recorded order, without apt and
+# without network; scripts/dev-setup.sh then finds every library installed and runs no apt. Only runs on main save the folder in the cache
+# (actions/cache), after the fetch and before the install, so it holds only checked files that no package's installation program has run
+# beside. The job "Ubuntu packages lock" (ubuntu-packages.yml) checks the lock itself.
 name: CI
 
 on:
@@ -62,7 +69,17 @@ jobs:
         # The supported development platforms (README.md), on pinned image labels only, never a moving "-latest" label:
         # Ubuntu 24.04 on x86-64, macOS 15 on Apple Silicon (macos-15 is arm64) and macOS 26 on Intel (macos-26-intel is x64).
         runner: [ubuntu-24.04, macos-15, macos-26-intel]
+        include:
+          # Ubuntu runs in a container from the base image of deps/ubuntu-packages.lock (tests/unit/ubuntu-packages-lock.test.ts keeps them
+          # equal): Ubuntu 24.04 with ca-certificates, curl and git, whose steps run as root. It needs no container options: the browsers
+          # use none of Docker's 64 MB of shared memory (/dev/shm; Playwright starts Chromium with --disable-dev-shm-usage), and the
+          # processes that outlive their parents stay as zombies only until the container is removed, which changes no result.
+          - runner: ubuntu-24.04
+            container:
+              image: docker.io/library/buildpack-deps:noble-scm@sha256:94ed690dd634b8b2f531eaa742fde9b1264077cd8ea695a3b960bd104ae4c481 # created 2026-10-26T23:50:00Z
     runs-on: ${{ matrix.runner }}
+    # The Ubuntu entry's container (above). The expression is empty for macOS, whose jobs run on the runner itself, as before.
+    container: ${{ matrix.container || '' }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -79,9 +96,42 @@ jobs:
           name: engine-package
           path: engine-package
 
+      # Ubuntu only (the container): the Ubuntu packages of deps/ubuntu-packages.lock, which include the browsers' libraries. The cache's key
+      # changes with the lock; to throw a bad cache away, change ubuntu-packages-v1 in both keys, as the fetch step's message says.
+      - name: Restore the Ubuntu package files from the cache
+        if: ${{ runner.os == 'Linux' }}
+        id: ubuntu-packages-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ubuntu-packages
+          key: ubuntu-packages-v1-${{ hashFiles('deps/ubuntu-packages.lock') }}
+
+      - name: Fetch the Ubuntu package files that deps/ubuntu-packages.lock lists, each checked against its size and SHA-256
+        if: ${{ runner.os == 'Linux' }}
+        run: sh scripts/ubuntu-packages.sh fetch --report "$RUNNER_TEMP/ubuntu-packages.report" deps/ubuntu-packages.lock "$RUNNER_TEMP/ubuntu-packages"
+
+      - name: Save them in the cache (runs on main only), before any package is installed
+        if: ${{ runner.os == 'Linux' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule') && steps.ubuntu-packages-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ubuntu-packages
+          key: ubuntu-packages-v1-${{ hashFiles('deps/ubuntu-packages.lock') }}
+
+      - name: Install the Ubuntu packages with dpkg, in apt's recorded order, without apt and without network
+        if: ${{ runner.os == 'Linux' }}
+        run: sh scripts/ubuntu-packages.sh install --report "$RUNNER_TEMP/ubuntu-packages.report" deps/ubuntu-packages.lock "$RUNNER_TEMP/ubuntu-packages"
+
+      # Firefox refuses to start as root when HOME belongs to another user ("Running as root in a regular user's session is not supported"),
+      # and the runner mounts a folder of its own user as the container's HOME (/github/home). So the later steps use the container's own
+      # /root, as Playwright advises; scripts/dev-setup.sh installs Node.js, pnpm and the browsers there.
+      - name: Use the container's /root as HOME
+        if: ${{ runner.os == 'Linux' }}
+        run: echo "HOME=/root" >> "$GITHUB_ENV"
+
       # Installs Node.js and the Playwright browsers checked against SHA-256 hashes, pnpm's native binary checked against the
-      # sha512 in pnpm-lock.yaml, on Ubuntu the browsers' libraries from a frozen archive snapshot, and then runs
-      # `pnpm install --frozen-lockfile`, which fails if pnpm-lock.yaml does not match package.json or a package wants to run a script.
+      # sha512 in pnpm-lock.yaml, and then runs `pnpm install --frozen-lockfile`, which fails if pnpm-lock.yaml does not match
+      # package.json or a package wants to run a script. In the Ubuntu container it finds the browsers' libraries already installed from
+      # the lock and runs no apt; on developers' Ubuntu machines it installs them from the archive frozen at APT_SNAPSHOT.
       # /bin/bash on purpose: on macOS it is Apple's bash 3.2, the shell a stock Mac runs the script with.
       - name: Install pinned tools and dependencies
         run: /bin/bash scripts/dev-setup.sh
