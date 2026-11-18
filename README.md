@@ -60,7 +60,7 @@ Serve the `dist/` folder that `pnpm build` produces, with the security headers f
 - Web decision: [ADR-0014](https://github.com/BayanDocs/docs/blob/HEAD/adr/0014-web-shell.md); engine boundary: [ADR-0012](https://github.com/BayanDocs/docs/blob/HEAD/adr/0012-engine-boundary.md) and the [engine protocol](https://github.com/BayanDocs/docs/blob/HEAD/specs/engine-protocol.md)
 - Work packages: [docs/workpackages](https://github.com/BayanDocs/docs/tree/HEAD/workpackages)
 
-Contributors and agents: start with [AGENTS.md](AGENTS.md).
+Contributors and agents: start with [AGENTS.md](AGENTS.md). The developer guide's page [Developing bayan-web](https://github.com/BayanDocs/docs/blob/HEAD/developer/bayan-web.md) shows how to set up a development machine and run the verification gate, and how this repository fits with the others.
 
 ## License
 
