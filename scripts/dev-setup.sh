@@ -29,7 +29,7 @@ set -euo pipefail
 
 NODE_VERSION=24.22.1 # Active LTS security release of 2026-10-20 (CVE-2026-111497 in the Brotli decoder); must equal .nvmrc
 PLAYWRIGHT_VERSION=1.63.0 # must equal @playwright/test in package.json; the browser builds below belong to this version
-APT_SNAPSHOT=20261111T000000Z # Ubuntu archive as of 2026-11-11 00:00 UTC: the snapshot of deps/ubuntu-packages.lock (a test keeps them equal)
+APT_SNAPSHOT=20261116T000000Z # Ubuntu archive as of 2026-11-16 00:00 UTC: the snapshot of deps/ubuntu-packages.lock (a test keeps them equal)
 
 # SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.1, whose signature by a Node.js release key was checked.
 node_sha256() {

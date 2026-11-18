@@ -76,7 +76,7 @@ jobs:
           # processes that outlive their parents stay as zombies only until the container is removed, which changes no result.
           - runner: ubuntu-24.04
             container:
-              image: docker.io/library/buildpack-deps:noble-scm@sha256:94ed690dd634b8b2f531eaa742fde9b1264077cd8ea695a3b960bd104ae4c481 # created 2026-10-26T23:50:00Z
+              image: docker.io/library/buildpack-deps:noble-scm@sha256:0f0bbda28bd5dfb36cf03fec38f05de01899ac76c68bfa68bd39dd40a49f9861 # created 2026-11-12T00:17:04Z
     runs-on: ${{ matrix.runner }}
     # The Ubuntu entry's container (above). The expression is empty for macOS, whose jobs run on the runner itself, as before.
     container: ${{ matrix.container || '' }}
