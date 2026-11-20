@@ -75,3 +75,20 @@ export async function colourAt(page: Page, x: number, y: number): Promise<number
   const ratio = await page.evaluate(() => window.devicePixelRatio);
   return tilePixel(page, Math.round(x * ratio), Math.round(y * ratio));
 }
+
+/** Keeps the engine's worker and the open document's identifier, so that a test can hand the app a message as the engine would. */
+export async function keepWorker(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      if ((message as { worker?: unknown } | null)?.worker === "init") {
+        Object.assign(globalThis, { __engineWorker: this });
+        this.addEventListener("message", (event: MessageEvent<unknown>) => {
+          const reply = event.data as { type?: unknown; payload?: { doc_id?: unknown } } | null;
+          if (reply?.type === "doc.opened") Object.assign(globalThis, { __docId: reply.payload?.doc_id });
+        });
+      }
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+  });
+}
