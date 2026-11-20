@@ -9,4 +9,4 @@
 # so it refuses a shallow clone of bayan-web.
 # `pnpm verify` fails if engine-package/ was built from another commit.
 # Change it like a dependency: in its own pull request, saying what changed in bayan-core between the two commits.
-commit=e7d6f1e1da00df143f88a6a00e041fc3bc188e3f
+commit=3423a4f60ba3a8896dc944f457fa796bf1a5146a
