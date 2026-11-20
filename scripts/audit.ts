@@ -120,7 +120,7 @@ export function evaluateAudit(
     }
   }
   result.unusedExceptions = exceptions.filter((identifier) => !matched.has(identifier));
-  // pnpm counts every advisory by severity, also those it leaves out of the list (pnpm 12.9.0 leaves out the advisories that its exceptions
+  // pnpm counts every advisory by severity, also those it leaves out of the list (pnpm 12.22.0 leaves out the advisories that its exceptions
   // and audit level hide). The gate's run applies neither, so the counts and the list agree unless something still hides advisories.
   for (const severity of failingSeverities) {
     const count = (counts as Record<string, unknown>)[severity];

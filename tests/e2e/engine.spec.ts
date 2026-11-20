@@ -67,7 +67,7 @@ test("the policy refuses every other address and creates neither HTML nor script
       "a fragment": () => policy.createScriptURL(`${worker}#x`),
       "a path that walks up": () => policy.createScriptURL(worker.replace("/assets/", "/assets/../assets/")),
       "another built script": () => policy.createScriptURL(worker.replace("bayan-worker.js", "bayan_wasm.js")),
-      HTML: () => policy.createHTML("<img src=x>"),
+      "HTML text": () => policy.createHTML("<img src=x>"),
       "script text": () => policy.createScript("postMessage(1)"),
     };
     const results: Record<string, string> = {};
