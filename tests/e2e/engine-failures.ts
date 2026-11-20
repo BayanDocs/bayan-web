@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 
-// Engine failures on purpose, against the real engine, for the recovery tests (recovery.spec.ts).
+// Engine failures on purpose, against the real engine, for the recovery tests (recovery.spec.ts) and for the accessibility rules in the
+// states that failures lead to (axe.spec.ts).
 //
 // The engine panics on diag.panic only when its configuration's test switch test.allow_panic is on (spec §3.3, §6.7), which the app never
 // turns on. Before the app starts, enablePanics wraps Worker.prototype.postMessage: the wrapper adds the switch to the worker host's init
