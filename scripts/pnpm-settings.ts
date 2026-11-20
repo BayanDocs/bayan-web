@@ -72,7 +72,7 @@ function auditExceptionList(node: Node): string[] {
   for (const [key, entry] of node.entries) {
     if (key === "ignoreCves") {
       problems.push(
-        "ignoreCves is not applied by pnpm 12.9.0; name the advisory's GHSA identifier in ignoreGhsas instead",
+        "ignoreCves is not applied by pnpm 12.22.0; name the advisory's GHSA identifier in ignoreGhsas instead",
       );
     } else if (key !== "ignoreGhsas") {
       problems.push(`may hold only ignoreGhsas, not ${JSON.stringify(key)}`);
@@ -236,7 +236,7 @@ export function checkNpmrc(text: string): string[] {
 // ---------------------------------------------------------------------------------------------------------------------------------
 // What pnpm applies
 
-/** The settings pnpm must apply, exactly; the registries are pnpm 12.9.0's built-in defaults. */
+/** The settings pnpm must apply, exactly; the registries are pnpm 12.22.0's built-in defaults. */
 const requiredEffectiveSettings: ReadonlyMap<string, unknown> = new Map<string, unknown>([
   ["registry", npmRegistry],
   ["minimumReleaseAge", 1440],
@@ -246,7 +246,7 @@ const requiredEffectiveSettings: ReadonlyMap<string, unknown> = new Map<string, 
   ["blockExoticSubdeps", true],
 ]);
 
-/** Built into pnpm 12.9.0 (absent in a pnpm without them): JSR's registry for the @jsr scope, and the prefixes pnpm knows. */
+/** Built into pnpm 12.22.0 (absent in a pnpm without them): JSR's registry for the @jsr scope, and the prefixes pnpm knows. */
 const builtInEffectiveSettings: ReadonlyMap<string, unknown> = new Map<string, unknown>([
   ["@jsr:registry", "https://npm.jsr.io/"],
   [

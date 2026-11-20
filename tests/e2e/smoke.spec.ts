@@ -94,7 +94,11 @@ for (const colorScheme of ["light", "dark"] as const) {
     await openWithSystemScheme(page, colorScheme);
     await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme);
     const darkTheme = page.getByRole("switch", { name: "Dark theme" });
-    await (colorScheme === "dark" ? expect(darkTheme).toBeChecked() : expect(darkTheme).not.toBeChecked());
+    if (colorScheme === "dark") {
+      await expect(darkTheme).toBeChecked();
+    } else {
+      await expect(darkTheme).not.toBeChecked();
+    }
   });
 }
 

@@ -20,50 +20,52 @@
 # browser pins: list the archives with `pnpm exec playwright install --dry-run chromium-headless-shell firefox webkit`, once on
 # Linux and once with PLAYWRIGHT_HOST_PLATFORM_OVERRIDE set to each of mac14, mac14-arm64, mac15, mac15-arm64, mac26 and
 # mac26-arm64; then hash every archive from its publisher (Google's storage.googleapis.com for the Chromium headless shell,
-# Microsoft's playwright.download.prss.microsoft.com for Firefox and WebKit; cdn.playwright.dev only redirects to those two) and
+# Microsoft's playwright.download.prss.microsoft.com for Firefox and WebKit; the addresses Playwright reports on cdn.playwright.dev
+# redirect to those two, while its /builds/<browser>/... paths for Firefox and WebKit serve Microsoft's CDN storage directly) and
 # from npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/… and cdn.npmmirror.com/binaries/playwright/builds/…), a mirror
 # run by a different organization. Pin a hash only when both agree, and record any archive that has no independent copy yet.
 set -euo pipefail
 
-NODE_VERSION=24.22.1 # Active LTS security release of 2026-10-20 (CVE-2026-111497 in the Brotli decoder); must equal .nvmrc
-PLAYWRIGHT_VERSION=1.63.0 # must equal @playwright/test in package.json; the browser builds below belong to this version
+NODE_VERSION=24.22.3 # LTS security release of 2026-11-10 (high-severity fixes in HTTP/2, TLS and the HTTP parser); must equal .nvmrc
+PLAYWRIGHT_VERSION=1.65.1 # must equal @playwright/test in package.json; the browser builds below belong to this version
 APT_SNAPSHOT=20261025T000000Z # Ubuntu archive as of 2026-10-25 00:00 UTC, the same snapshot as the BayanDocs cloud environment
 
-# SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.1, whose signature by a Node.js release key was checked.
+# SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.3, whose signature by a Node.js release key was checked.
 node_sha256() {
   case "$1" in
-    linux-x64) echo 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;;
-    darwin-arm64) echo 654ba79de6155647e22321932b45f2a1ccb705976cc337c9b8e278beb085a628 ;;
-    darwin-x64) echo 65e450f90a6eaacd5000f611861c4ce65fadc87f813795dc4ed0c0e5f2fca2d4 ;;
+    linux-x64) echo 4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb ;;
+    darwin-arm64) echo 1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5 ;;
+    darwin-x64) echo 4daeec962855c1a6e66cda398a25037319dc1bbd4a0939188b3547afbbfb6490 ;;
     *) return 1 ;;
   esac
 }
 
-# SHA-256 and URL of every browser archive Playwright 1.63.0 may download on a supported platform (ffmpeg excluded: no test
-# records video). Unless marked otherwise, each hash was read from the publisher and confirmed identical on npmmirror on 2026-10-04.
+# SHA-256 and URL of every browser archive Playwright 1.65.1 may download on a supported platform (ffmpeg excluded: no test
+# records video). Unless marked otherwise, each hash was read from the publisher and confirmed identical on npmmirror on 2026-11-20.
 BROWSER_PINS='
 # Ubuntu 24.04, x86-64
-a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d  https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip
-b0905e84427cc162b9a6e4392be14e5e54e0ade911c83639962c8078b273565e  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1543/firefox-ubuntu-24.04.zip
-8c129d989a1c48d826ca11b45acbba919039de811623dc3819ccbd95b69eeb62  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2359/webkit-ubuntu-24.04.zip
+77a6442fd3c8acd3bef9e1067fc26f5ef464277d22f0e8cb58dc3e4077a3e458  https://cdn.playwright.dev/builds/cft/159.0.8154.6/linux64/chrome-headless-shell-linux64.zip
+189ce3e09c61776010ab8a7cbffaa016b8b1914d3c9b50cb5ab6d0c5db4c368f  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1572/firefox-ubuntu-24.04.zip
+4375ca56620d92f4bc8710b6f0cddc8afd2f50c4cca616a50355d63d715c7803  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2388/webkit-ubuntu-24.04.zip
 # macOS, Intel and Apple Silicon (the Chromium headless shell and Firefox are the same build on every macOS version)
-5c2eaa1aad62111bb5a70dd0889dd3093f3142277b8f78957a238257ee85f009  https://cdn.playwright.dev/builds/cft/153.0.8010.12/mac-x64/chrome-headless-shell-mac-x64.zip
-89d80a6d26ccd0ccfd51e22d9e1297283862af2b0cd91dce07459b35ca0059f2  https://cdn.playwright.dev/builds/cft/153.0.8010.12/mac-arm64/chrome-headless-shell-mac-arm64.zip
-717693ae50e22f6070895a73bc5546dc862ffdf87e6ba9892a5f9e423b312741  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1543/firefox-mac.zip
-12798eac57cad33a466d7315ddae1350a326dedd167ee4ac73307425f4fa8f28  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1543/firefox-mac-arm64.zip
-# WebKit on macOS 14 (revision 2251) and macOS 15 (revision 2359)
+89c56fb080ab4e9ba76656d5669af2b2dfc313c11434871e8f4e351c08a5ffca  https://cdn.playwright.dev/builds/cft/159.0.8154.6/mac-x64/chrome-headless-shell-mac-x64.zip
+b08e7beaf02a19e2ee5ed6955f9c3853ab9176cd5bb57ba87afbb82e9f81cc29  https://cdn.playwright.dev/builds/cft/159.0.8154.6/mac-arm64/chrome-headless-shell-mac-arm64.zip
+f31ac41e6450c5c9040fc7290f3da8a6a5f5672b0075f18b37cbd28fbf95ad36  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1572/firefox-mac.zip
+9691b4a07405d8faf8a44f6378d66db480d36159d9e9c4ed1d6066687697e1f2  https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1572/firefox-mac-arm64.zip
+# WebKit on macOS 14 (revision 2251, unchanged since Playwright 1.63.0) and macOS 15 (revision 2388)
 50ce5d7004274b01b106dda5ceee6703013b7bd0d0384457cd93a524ced34202  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2251/webkit-mac-14.zip
 2754eca5bab8773a6b1315528e7d8f342977ace799b3a91314e1be0cb324ee49  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2251/webkit-mac-14-arm64.zip
-b9d6206ef34cb6d764f7c9abf7b8fa94fa130947bc5d98ddbe52f011aa72792d  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2359/webkit-mac-15.zip
-33902c98fc0442f916eaa1e006af775f03c65c554eacba78e446581ba2f71ffd  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2359/webkit-mac-15-arm64.zip
-# WebKit on macOS 26 and later (revision 2359). NOT INDEPENDENTLY CONFIRMED: npmmirror had no copy of these two on 2026-10-04, so
-# they are confirmed only across the two serving systems Microsoft runs (its download service and its separate CDN storage).
-# Re-check them against npmmirror in the monthly dependency session (owner decision, 2026-10-04).
-7b661e131cc479145ba6e18495c945b7fb9447e87857982e3a433c3232a7546a  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2359/webkit-mac-26.zip
-f0c43ff8a566ef9cf57b5c0e349d985c60e6ffeb7416e8aac34a5c911bbb8ca7  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2359/webkit-mac-26-arm64.zip
+c1220c739a2dbb6450059bfd678d5f5057e807d1d004464ef890ee1e6a9db727  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2388/webkit-mac-15.zip
+50b4238e145b8018e48aacefc15e9b3a43fafd18eee42ed4cb29a2e5c5a2e385  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2388/webkit-mac-15-arm64.zip
+# WebKit on macOS 26 and later (revision 2388). NOT INDEPENDENTLY CONFIRMED: npmmirror does not mirror WebKit for macOS 26 (on
+# 2026-11-20 its lists for revisions 2359 and 2388 ended at mac-15), so these two are confirmed only across the two serving systems
+# Microsoft runs: its download service and its separate CDN storage (cdn.playwright.dev/builds/..., which serves them directly).
+# Re-check them in the monthly dependency session (owner decision, 2026-10-04), and look for another independent copy.
+43603b6130fc1341e02b87dde0d635f02b6d2defb90bc4f4e4b4a2d101900872  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2388/webkit-mac-26.zip
+d3cc730027105a014d0cbf53925bd7eababbdf8dbccbb4a3a1713c5f631dbcaf  https://cdn.playwright.dev/dbazure/download/playwright/builds/webkit/2388/webkit-mac-26-arm64.zip
 '
 
-# Ubuntu 24.04 packages the browsers need: Playwright 1.63.0's own lists (fonts and tools, Chromium, Firefox, WebKit), merged.
+# Ubuntu 24.04 packages the browsers need: Playwright 1.65.1's own lists (fonts and tools, Chromium, Firefox, WebKit), merged.
 APT_PACKAGES='
   xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-cyrillic xfonts-scalable
   fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf libasound2t64
