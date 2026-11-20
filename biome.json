@@ -56,7 +56,7 @@
       }
     },
     {
-      "includes": ["tests/e2e/**", "playwright.config.ts"],
+      "includes": ["tests/e2e/**", "tests/screen-reader/**", "playwright.config.ts"],
       "linter": {
         "domains": {
           "playwright": "recommended"

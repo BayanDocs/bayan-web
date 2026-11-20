@@ -20,7 +20,8 @@
 # browser pins: list the archives with `pnpm exec playwright install --dry-run chromium-headless-shell firefox webkit`, once on
 # Linux and once with PLAYWRIGHT_HOST_PLATFORM_OVERRIDE set to each of mac14, mac14-arm64, mac15, mac15-arm64, mac26 and
 # mac26-arm64; then hash every archive from its publisher (Google's storage.googleapis.com for the Chromium headless shell,
-# Microsoft's playwright.download.prss.microsoft.com for Firefox and WebKit; cdn.playwright.dev only redirects to those two) and
+# Microsoft's playwright.download.prss.microsoft.com for Firefox and WebKit; the addresses Playwright reports on cdn.playwright.dev
+# redirect to those two, while its /builds/<browser>/... paths for Firefox and WebKit serve Microsoft's CDN storage directly) and
 # from npmmirror (cdn.npmmirror.com/binaries/chrome-for-testing/… and cdn.npmmirror.com/binaries/playwright/builds/…), a mirror
 # run by a different organization. Pin a hash only when both agree, and record any archive that has no independent copy yet.
 set -euo pipefail
