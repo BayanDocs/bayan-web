@@ -25,16 +25,16 @@
 # run by a different organization. Pin a hash only when both agree, and record any archive that has no independent copy yet.
 set -euo pipefail
 
-NODE_VERSION=24.22.1 # Active LTS security release of 2026-10-20 (CVE-2026-111497 in the Brotli decoder); must equal .nvmrc
+NODE_VERSION=24.22.3 # LTS security release of 2026-11-10 (high-severity fixes in HTTP/2, TLS and the HTTP parser); must equal .nvmrc
 PLAYWRIGHT_VERSION=1.63.0 # must equal @playwright/test in package.json; the browser builds below belong to this version
 APT_SNAPSHOT=20261025T000000Z # Ubuntu archive as of 2026-10-25 00:00 UTC, the same snapshot as the BayanDocs cloud environment
 
-# SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.1, whose signature by a Node.js release key was checked.
+# SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.3, whose signature by a Node.js release key was checked.
 node_sha256() {
   case "$1" in
-    linux-x64) echo 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;;
-    darwin-arm64) echo 654ba79de6155647e22321932b45f2a1ccb705976cc337c9b8e278beb085a628 ;;
-    darwin-x64) echo 65e450f90a6eaacd5000f611861c4ce65fadc87f813795dc4ed0c0e5f2fca2d4 ;;
+    linux-x64) echo 4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb ;;
+    darwin-arm64) echo 1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5 ;;
+    darwin-x64) echo 4daeec962855c1a6e66cda398a25037319dc1bbd4a0939188b3547afbbfb6490 ;;
     *) return 1 ;;
   esac
 }
