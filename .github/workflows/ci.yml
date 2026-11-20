@@ -87,6 +87,7 @@ jobs:
         run: /bin/bash scripts/dev-setup.sh
 
       - name: Verify
+        id: verify
         run: pnpm verify
 
       # WEB-002's figures (keystroke latency, frame times, round trips, memory) from tests/e2e/measurements.spec.ts, kept for each platform.
@@ -98,3 +99,16 @@ jobs:
           path: test-results/measurements
           if-no-files-found: warn
           retention-days: 30
+
+      # Only when the gate itself failed: what Playwright keeps of each failed end-to-end test (playwright.config.ts, trace: retain-on-failure),
+      # its trace (the page's requests, DOM snapshots and screenshots, the console, each step) and its error context, so that a failure that
+      # does not happen again, such as FU-22's hang in WebKit, can still be examined. test-results/ holds nothing but what the tests produced
+      # from the app and the engine's mock document. Anyone signed in to GitHub can download a public repository's artifacts.
+      - name: Upload the test results of the failed verification
+        if: ${{ failure() && steps.verify.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ matrix.runner }}
+          path: test-results
+          if-no-files-found: warn
+          retention-days: 7
