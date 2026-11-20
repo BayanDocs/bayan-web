@@ -32,7 +32,7 @@ describe("dependency policy check", () => {
 
   it("rejects an unpinned or unhashed package manager", () => {
     const input = repositoryInput();
-    input.packageJson.packageManager = "pnpm@12.9.0";
+    input.packageJson.packageManager = "pnpm@12.22.0";
     expect(checkPolicy(input).join("\n")).toContain("sha512");
   });
 
@@ -92,7 +92,7 @@ describe("dependency policy check", () => {
 
   it("accepts the pinned pnpm as the running package manager", () => {
     const input = repositoryInput();
-    input.userAgent = "pnpm/12.9.0 npm/? node/v24.21.0 linux x64";
+    input.userAgent = "pnpm/12.22.0 npm/? node/v24.22.3 linux x64";
     expect(checkPolicy(input)).toEqual([]);
   });
 

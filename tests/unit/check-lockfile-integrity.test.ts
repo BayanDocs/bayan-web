@@ -225,16 +225,16 @@ describe("lockfile integrity check", () => {
 
   it("checks pnpm's own entry in the first document too", () => {
     const input = withLockfile(
-      /( {2}'@pnpm\/exe\.linux-x64@12\.9\.0':\n {4}resolution: )\{integrity: sha512-[^}]+\}/,
+      /( {2}'@pnpm\/exe\.linux-x64@12\.22\.0':\n {4}resolution: )\{integrity: sha512-[^}]+\}/,
       "$1{tarball: https://example.org/pnpm.tgz}",
     );
     expect(checkLockfileIntegrity(input)).toEqual([
-      expect.stringContaining("@pnpm/exe.linux-x64@12.9.0 resolves through tarball"),
+      expect.stringContaining("@pnpm/exe.linux-x64@12.22.0 resolves through tarball"),
     ]);
   });
 
   // A pnpmfile's hooks can change pnpm's settings: the review of X-003 redirected pnpm's registry with one (`updateConfig`), which neither
-  // `pnpm config list` nor the other checks see. pnpm 12.9.0 loads `.pnpmfile.cjs` and `.pnpmfile.mjs` from the top folder.
+  // `pnpm config list` nor the other checks see. pnpm 12.22.0 loads `.pnpmfile.cjs` and `.pnpmfile.mjs` from the top folder.
   it("rejects a pnpmfile in the repository, and a lockfile that pnpm wrote with one", () => {
     for (const name of [".pnpmfile.cjs", ".pnpmfile.mjs", "pnpmfile.js"]) {
       const input = { ...repositoryInput(), rootFiles: [...repositoryInput().rootFiles, name] };

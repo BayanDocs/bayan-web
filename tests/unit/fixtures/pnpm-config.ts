@@ -1,4 +1,4 @@
-/** What `pnpm config list --json` printed in this repository with pnpm 12.9.0 on 2026-10-08, run from a script that `pnpm run` started. */
+/** What `pnpm config list --json` printed in this repository with pnpm 12.22.0 on 2026-11-20, run from a script that `pnpm run` started. */
 export const recordedPnpmConfig = {
   "@jsr:registry": "https://npm.jsr.io/",
   allowBuilds: { fsevents: false },
@@ -15,6 +15,6 @@ export const recordedPnpmConfig = {
   saveExact: true,
   strictDepBuilds: true,
   trustPolicy: "no-downgrade",
-  userAgent: "pnpm/12.9.0 npm/? node/? linux x64",
+  userAgent: "pnpm/12.22.0 npm/? node/? linux x64",
   verifyDepsBeforeRun: false,
 };
