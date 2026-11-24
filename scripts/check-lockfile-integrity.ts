@@ -216,7 +216,7 @@ class Checker {
     for (const [path, importer] of this.mapping(node, "importers", line)) {
       for (const [field, dependencies] of this.mapping(importer, `the importer ${path}`, line)) {
         if (field === "configDependencies") {
-          // pnpm 12.9.0 writes `configDependencies: {}` in its own document; any entry is refused.
+          // pnpm 12.22.0 writes `configDependencies: {}` in its own document; any entry is refused.
           if (dependencies.kind !== "mapping" || dependencies.entries.size > 0) {
             this.problem(
               dependencies.line,

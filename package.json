@@ -6,10 +6,10 @@
   "license": "GPL-3.0-or-later WITH AdditionRef-BayanDocs-App-Store-Permission",
   "repository": "github:BayanDocs/bayan-web",
   "type": "module",
-  "packageManager": "pnpm@12.9.0+sha512.8f64efa0b792986ca98ae568791bcd7722807e274c4f0c1d9853c62116495c584119db98762a2a5343b1684d361b9ae26fdd16d551666d7635346d3fae830ddd",
+  "packageManager": "pnpm@12.22.0+sha512.894940a3d9a57dfa6fd373990fb4e41e09c2f2d76d982ed1d75275d39267f988fb4e2d40900cbe9921c68d97c67aa1a1096d276633db248f7b34927ac9ddb7a4",
   "engines": {
-    "node": "24.22.1",
-    "pnpm": "12.9.0"
+    "node": "24.22.3",
+    "pnpm": "12.22.0"
   },
   "scripts": {
     "dev": "vite",
@@ -27,18 +27,19 @@
     "verify": "pnpm run check:policy && pnpm run check:lockfile && pnpm run check:engine && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build && pnpm run test:e2e && pnpm run audit"
   },
   "dependencies": {
-    "react": "19.3.0",
-    "react-aria-components": "1.21.1",
-    "react-dom": "19.3.0"
+    "react": "19.3.1",
+    "react-aria-components": "1.22.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@playwright/test": "1.63.0",
-    "@types/node": "24.19.1",
+    "@axe-core/playwright": "4.14.0",
+    "@biomejs/biome": "2.6.8",
+    "@playwright/test": "1.65.1",
+    "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "typescript": "7.0.2",
-    "vite": "8.3.3",
-    "vitest": "5.0.3"
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
   }
 }

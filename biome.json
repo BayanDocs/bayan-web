@@ -14,8 +14,16 @@
     "indentWidth": 2,
     "lineWidth": 120
   },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
   "linter": {
     "enabled": true,
+    "domains": {
+      "playwright": "none"
+    },
     "rules": {
       "preset": "recommended",
       "security": {
@@ -44,6 +52,14 @@
           "suspicious": {
             "noConsole": "off"
           }
+        }
+      }
+    },
+    {
+      "includes": ["tests/e2e/**", "tests/screen-reader/**", "playwright.config.ts"],
+      "linter": {
+        "domains": {
+          "playwright": "recommended"
         }
       }
     }

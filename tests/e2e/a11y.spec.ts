@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { collectProblems } from "./collect-problems.ts";
-import { waitForDocument } from "./document.ts";
+import { keepWorker, waitForDocument } from "./document.ts";
 
 // The accessibility mirror v0 (WEB-002, ADR-0020 §4): the engine's accessibility tree as DOM that assistive technology reads, and the
 // caret-sync prototype. Screen readers themselves are tested by hand (docs/spikes/WEB-002-report.md, "Screen-reader scripts"); these
@@ -124,23 +124,6 @@ test("the mirror and the input bridge are left out of the browser's page transla
   );
   expect(translatable).toEqual([]);
 });
-
-/** Keeps the engine's worker and the open document's identifier, so that a test can hand the app a message as the engine would. */
-async function keepWorker(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const post = Worker.prototype.postMessage;
-    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
-      if ((message as { worker?: unknown } | null)?.worker === "init") {
-        Object.assign(globalThis, { __engineWorker: this });
-        this.addEventListener("message", (event: MessageEvent<unknown>) => {
-          const reply = event.data as { type?: unknown; payload?: { doc_id?: unknown } } | null;
-          if (reply?.type === "doc.opened") Object.assign(globalThis, { __docId: reply.payload?.doc_id });
-        });
-      }
-      return Reflect.apply(post, this, [message, transfer]);
-    } as typeof Worker.prototype.postMessage;
-  });
-}
 
 test("a tree deeper than the mirror's limit becomes lines of text below the limit, without crashing or freezing", async ({
   page,

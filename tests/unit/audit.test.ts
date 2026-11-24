@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { auditArguments, evaluateAudit } from "../../scripts/audit.ts";
 
 // Reports in the format that `pnpm audit --json` prints (recorded from pnpm 12.9.0 on 2026-10-07 for a test project that depended on an old
-// lodash); the advisory titles, identifiers and addresses here are placeholders.
+// lodash; pnpm 12.22.0 printed the same format on 2026-11-20); the advisory titles, identifiers and addresses here are placeholders.
 function advisory(id: number, severity: string) {
   return {
     id,
@@ -74,7 +74,7 @@ describe("audit gate", () => {
     ]);
   });
 
-  // pnpm 12.9.0 leaves the advisories that its exceptions or audit level hide out of the list, but still counts them. The review of X-003
+  // pnpm 12.22.0 leaves the advisories that its exceptions or audit level hide out of the list, but still counts them. The review of X-003
   // hid two high advisories this way with escaped keys in pnpm-workspace.yaml, and the audit passed. The gate's own run applies neither,
   // so a count above the list means that something still hides advisories.
   it("fails when pnpm counts more high or critical advisories than it lists", () => {

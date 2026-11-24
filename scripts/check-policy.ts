@@ -38,7 +38,7 @@ export interface PolicyInput {
   nodeVersion: string;
   /**
    * The npm_config_user_agent environment variable, which pnpm sets for every script it runs (for example
-   * "pnpm/12.9.0 npm/? node/v24.21.0 linux x64"), or undefined when this check runs outside a package manager.
+   * "pnpm/12.22.0 npm/? node/v24.22.3 linux x64"), or undefined when this check runs outside a package manager.
    */
   userAgent: string | undefined;
   /** The settings pnpm applies (the output of `pnpm config list --json`), or why they could not be read. */

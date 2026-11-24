@@ -25,13 +25,13 @@ function withLockfile(search: string | RegExp, replacement: string | ((match: st
 }
 
 /** A real entry of the lockfile: React's resolution line. */
-const reactResolution = /( {2}react@19\.3\.0:\n {4}resolution: )\{integrity: sha512-[^}]+\}/;
+const reactResolution = /( {2}react@19\.3\.1:\n {4}resolution: )\{integrity: sha512-[^}]+\}/;
 
 /** The project's dependency on React in the importers section, in the block layout pnpm writes. */
-const reactImporter = / {6}react:\n {8}specifier: 19\.3\.0\n {8}version: 19\.3\.0\n/;
+const reactImporter = / {6}react:\n {8}specifier: 19\.3\.1\n {8}version: 19\.3\.1\n/;
 
 /** The line that locks the project's React version. */
-const reactVersion = /( {6}react:\n {8}specifier: 19\.3\.0\n)( {8}version: 19\.3\.0)\n/;
+const reactVersion = /( {6}react:\n {8}specifier: 19\.3\.1\n)( {8}version: 19\.3\.1)\n/;
 
 const unreadable = "cannot read the lockfile with certainty";
 
@@ -45,9 +45,9 @@ describe("lockfile integrity check", () => {
   it("rejects a tarball source", () => {
     const input = withLockfile(
       reactResolution,
-      "$1{integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==, tarball: https://example.org/react-19.3.0.tgz}",
+      "$1{integrity: sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==, tarball: https://example.org/react-19.3.1.tgz}",
     );
-    expect(checkLockfileIntegrity(input)).toEqual([expect.stringContaining("react@19.3.0 resolves through tarball")]);
+    expect(checkLockfileIntegrity(input)).toEqual([expect.stringContaining("react@19.3.1 resolves through tarball")]);
   });
 
   it("rejects a Git source", () => {
@@ -61,11 +61,11 @@ describe("lockfile integrity check", () => {
   it("rejects a local folder or file", () => {
     const input = withLockfile(reactResolution, "$1{directory: ../react, type: directory}");
     expect(checkLockfileIntegrity(input)).toEqual([expect.stringContaining("resolves through directory, type")]);
-    const key = withLockfile(/^ {2}react@19\.3\.0:$/m, "  'react@file:../react':");
+    const key = withLockfile(/^ {2}react@19\.3\.1:$/m, "  'react@file:../react':");
     expect(checkLockfileIntegrity(key)).toEqual([
       expect.stringContaining("react@file:../react does not come from the registry"),
     ]);
-    const plainKey = withLockfile(/^ {2}react@19\.3\.0:$/m, "  react@file:../react:");
+    const plainKey = withLockfile(/^ {2}react@19\.3\.1:$/m, "  react@file:../react:");
     expect(checkLockfileIntegrity(plainKey)).not.toEqual([]);
   });
 
@@ -74,8 +74,8 @@ describe("lockfile integrity check", () => {
     expect(checkLockfileIntegrity(sha1)).toEqual([expect.stringContaining("has no SHA-512 integrity hash")]);
     const none = withLockfile(reactResolution, "$1{}");
     expect(checkLockfileIntegrity(none)).toEqual([expect.stringContaining("has no SHA-512 integrity hash")]);
-    const missing = withLockfile(/( {2}react@19\.3\.0:\n) {4}resolution: \{[^}]+\}\n/, "$1");
-    expect(checkLockfileIntegrity(missing)).toEqual([expect.stringContaining("react@19.3.0 has no resolution")]);
+    const missing = withLockfile(/( {2}react@19\.3\.1:\n) {4}resolution: \{[^}]+\}\n/, "$1");
+    expect(checkLockfileIntegrity(missing)).toEqual([expect.stringContaining("react@19.3.1 has no resolution")]);
   });
 
   it("rejects fields that only packages from elsewhere have", () => {
@@ -86,7 +86,7 @@ describe("lockfile integrity check", () => {
     ]) {
       const input = withLockfile(reactResolution, `$&\n    ${field}`);
       expect(checkLockfileIntegrity(input)).toEqual([
-        expect.stringContaining(`react@19.3.0 has the field "${field.split(":")[0]}"`),
+        expect.stringContaining(`react@19.3.1 has the field "${field.split(":")[0]}"`),
       ]);
     }
   });
@@ -100,19 +100,19 @@ describe("lockfile integrity check", () => {
     );
     expect(checkLockfileIntegrity(git)).toEqual([expect.stringContaining("which is not a registry version")]);
     const peer = withLockfile(
-      / {8}version: 1\.21\.1\(react-dom@19\.3\.0\(react@19\.3\.0\)\)\(react@19\.3\.0\)\n/,
-      "        version: 1.21.1(react-dom@file:../react-dom)(react@19.3.0)\n",
+      / {8}version: 1\.22\.1\(react-dom@19\.3\.1\(react@19\.3\.1\)\)\(react@19\.3\.1\)\n/,
+      "        version: 1.22.1(react-dom@file:../react-dom)(react@19.3.1)\n",
     );
     expect(checkLockfileIntegrity(peer)).toEqual([expect.stringContaining("which is not a registry version")]);
   });
 
   it("accepts an npm alias of a registry version", () => {
-    const input = withLockfile(reactVersion, "$1        version: react@19.3.0\n");
+    const input = withLockfile(reactVersion, "$1        version: react@19.3.1\n");
     expect(checkLockfileIntegrity(input)).toEqual([]);
   });
 
   it("rejects snapshot dependencies and overrides that are not registry versions", () => {
-    const snapshot = withLockfile(/( {6}'@swc\/helpers': )0\.5\.23/, "$1file:../helpers");
+    const snapshot = withLockfile(/( {6}'@swc\/helpers': )0\.5\.24/, "$1file:../helpers");
     expect(checkLockfileIntegrity(snapshot)).toEqual([
       expect.stringContaining('@swc/helpers is locked to "file:../helpers"'),
     ]);
@@ -127,25 +127,25 @@ describe("lockfile integrity check", () => {
   // pnpm reads every YAML layout, so these spellings of a dependency from elsewhere must fail as well. Each one passed the first
   // version of this check, which read the lockfile line by line, while pnpm installed what it pointed to.
   it("rejects a dependency from elsewhere in the {…} layout", () => {
-    for (const version of ["'http://127.0.0.1:8765/react-19.3.0.tgz'", "'link:evil'", "'file:evil'"]) {
-      const input = withLockfile(reactImporter, `      react: {specifier: 19.3.0, version: ${version}}\n`);
+    for (const version of ["'http://127.0.0.1:8765/react-19.3.1.tgz'", "'link:evil'", "'file:evil'"]) {
+      const input = withLockfile(reactImporter, `      react: {specifier: 19.3.1, version: ${version}}\n`);
       expect(checkLockfileIntegrity(input)).toEqual([
         expect.stringContaining(`locked to ${JSON.stringify(version.slice(1, -1))}`),
       ]);
     }
-    const sameAsBlock = withLockfile(reactImporter, "      react: {specifier: 19.3.0, version: 19.3.0}\n");
+    const sameAsBlock = withLockfile(reactImporter, "      react: {specifier: 19.3.1, version: 19.3.1}\n");
     expect(checkLockfileIntegrity(sameAsBlock)).toEqual([]);
   });
 
   it("refuses a section, an entry or a key in a layout pnpm does not write", () => {
     const flowSection = withLockfile(
       "\nsnapshots:\n",
-      "\noverrides: {react: {specifier: 19.3.0, version: 'http://127.0.0.1:8765/react.tgz'}}\n\nsnapshots:\n",
+      "\noverrides: {react: {specifier: 19.3.1, version: 'http://127.0.0.1:8765/react.tgz'}}\n\nsnapshots:\n",
     );
     expect(checkLockfileIntegrity(flowSection)).toEqual([expect.stringContaining(unreadable)]);
     const deeper = withLockfile(reactResolution, (entry) => entry.replace("    resolution:", "      resolution:"));
     expect(checkLockfileIntegrity(deeper)).toEqual([expect.stringContaining("indentation")]);
-    const fourSpaces = withLockfile(/^ {2}react@19\.3\.0:\n {4}resolution:/m, "    react@19.3.0:\n        resolution:");
+    const fourSpaces = withLockfile(/^ {2}react@19\.3\.1:\n {4}resolution:/m, "    react@19.3.1:\n        resolution:");
     expect(checkLockfileIntegrity(fourSpaces)).toEqual([expect.stringContaining("indentation")]);
     const spaceBeforeColon = withLockfile(reactVersion, "$1        version : link:evil\n");
     expect(checkLockfileIntegrity(spaceBeforeColon)).toEqual([expect.stringContaining(unreadable)]);
@@ -155,20 +155,20 @@ describe("lockfile integrity check", () => {
 
   it("refuses the YAML features pnpm does not use", () => {
     const variants = [
-      "$1        version: &v 19.3.0\n", // anchor
+      "$1        version: &v 19.3.1\n", // anchor
       "$1        version: *v\n", // alias
-      "$1        version: !!str 19.3.0\n", // tag
-      '$1        version: "19.3.0"\n', // double quotes
-      "$1        version: |\n          19.3.0\n", // block text
-      "$1        ? version\n        : 19.3.0\n", // explicit key
-      "$1        version: 19.3.0 # pinned\n", // comment after a value
-      "$1        version:\t19.3.0\n", // tab
-      "$1        version: 19.3.0 \n", // trailing space
-      "$1        version: 19.3.0 \n", // a character outside printable ASCII
-      "$1        version: '19.3.0\n", // text that does not end
+      "$1        version: !!str 19.3.1\n", // tag
+      '$1        version: "19.3.1"\n', // double quotes
+      "$1        version: |\n          19.3.1\n", // block text
+      "$1        ? version\n        : 19.3.1\n", // explicit key
+      "$1        version: 19.3.1 # pinned\n", // comment after a value
+      "$1        version:\t19.3.1\n", // tab
+      "$1        version: 19.3.1 \n", // trailing space
+      "$1        version: 19.3.1 \n", // a character outside printable ASCII
+      "$1        version: '19.3.1\n", // text that does not end
       "$1        version:\n", // a key without a value
-      "$1        null: 19.3.0\n        version: 19.3.0\n", // a key YAML reads as null
-      "$1        - 19.3.0\n", // a list where a mapping continues
+      "$1        null: 19.3.1\n        version: 19.3.1\n", // a key YAML reads as null
+      "$1        - 19.3.1\n", // a list where a mapping continues
     ];
     for (const variant of variants) {
       const input = withLockfile(reactVersion, variant);
@@ -225,16 +225,16 @@ describe("lockfile integrity check", () => {
 
   it("checks pnpm's own entry in the first document too", () => {
     const input = withLockfile(
-      /( {2}'@pnpm\/exe\.linux-x64@12\.9\.0':\n {4}resolution: )\{integrity: sha512-[^}]+\}/,
+      /( {2}'@pnpm\/exe\.linux-x64@12\.22\.0':\n {4}resolution: )\{integrity: sha512-[^}]+\}/,
       "$1{tarball: https://example.org/pnpm.tgz}",
     );
     expect(checkLockfileIntegrity(input)).toEqual([
-      expect.stringContaining("@pnpm/exe.linux-x64@12.9.0 resolves through tarball"),
+      expect.stringContaining("@pnpm/exe.linux-x64@12.22.0 resolves through tarball"),
     ]);
   });
 
   // A pnpmfile's hooks can change pnpm's settings: the review of X-003 redirected pnpm's registry with one (`updateConfig`), which neither
-  // `pnpm config list` nor the other checks see. pnpm 12.9.0 loads `.pnpmfile.cjs` and `.pnpmfile.mjs` from the top folder.
+  // `pnpm config list` nor the other checks see. pnpm 12.22.0 loads `.pnpmfile.cjs` and `.pnpmfile.mjs` from the top folder.
   it("rejects a pnpmfile in the repository, and a lockfile that pnpm wrote with one", () => {
     for (const name of [".pnpmfile.cjs", ".pnpmfile.mjs", "pnpmfile.js"]) {
       const input = { ...repositoryInput(), rootFiles: [...repositoryInput().rootFiles, name] };
