@@ -5,3 +5,12 @@
 # Security-sensitive paths: parsers of untrusted input, cryptography, authentication, authorization, the FFI boundary, update mechanisms, and the CI workflows and the checks they run (docs/plan/07-quality-security-testing.md, section 3). A change to them needs a dedicated security review session in addition to the normal review. The work package that creates such a path adds it here.
 # CI and the checks that judge pull requests: a workflow triggered by a pull request runs that pull request's own copy of these files, so a change here can weaken the checks that judge it.
 /.github/ @Gabrielc1925
+# What CI's Ubuntu job downloads, checks and installs as root (ADR-0017, amendment of 2026-11-05; work package X-005): CI runs a pull request's own copy of these files, so a change here decides what CI fetches and runs, and how it is checked.
+# deps/ holds the pins. ubuntu-packages.lock names the base image of the Ubuntu job and lists every Ubuntu package file that the job installs, with its size and SHA-256, taken from the package index that apt checked against Ubuntu's signature: those hashes are the only link between the files and that signature. Every file in the folder is such a pin, and a new one is covered as soon as it is added.
+/deps/ @Gabrielc1925
+# The programs that act on the pins. ubuntu-packages.sh fetches the Ubuntu package files, checks each against the lock and installs them with dpkg, which runs the packages' maintainer scripts as root in the container; its lock command is also the check that ties the lock to Ubuntu's signature, which the workflow "Ubuntu packages" runs again and compares with the committed lock. dev-setup.sh runs in every verify job, as root in the Ubuntu container: its pins decide which Node.js, pnpm and browser builds CI downloads, and it checks each against its SHA-256 (pnpm's against the sha512 in pnpm-lock.yaml) before it installs it.
+/scripts/ubuntu-packages.sh @Gabrielc1925
+/scripts/dev-setup.sh @Gabrielc1925
+# The gate's tests of these checks, which a pull request can weaken too: that the lock is well formed, that the Ubuntu job runs in the lock's base image, that no workflow runs apt or names a snapshot date, and that APT_PACKAGES and APT_SNAPSHOT of dev-setup.sh match the lock (ubuntu-packages-lock.test.ts); and that ubuntu-packages.sh checks every file it fetches, refuses what it must and installs exactly what the lock lists (ubuntu-packages-script.test.ts).
+/tests/unit/ubuntu-packages-lock.test.ts @Gabrielc1925
+/tests/unit/ubuntu-packages-script.test.ts @Gabrielc1925
