@@ -6,7 +6,9 @@
 #   3. The project's packages, with `pnpm install --frozen-lockfile` (pnpm checks every package against pnpm-lock.yaml).
 #   4. The three browser engines Playwright tests in (Chromium's headless shell, Firefox, WebKit). Playwright says which builds this
 #      machine needs; each archive is checked against the SHA-256 pinned below, and an archive without a pin is refused.
-#   5. On Ubuntu 24.04, the libraries those browsers need, from the signed Ubuntu archive frozen at a snapshot date.
+#   5. On Ubuntu 24.04, the libraries those browsers need, from the signed Ubuntu archive frozen at a snapshot date. CI's Ubuntu job
+#      runs in a container that has already installed them, as exact files, from deps/ubuntu-packages.lock (scripts/ubuntu-packages.sh),
+#      so there this step finds them all installed and runs no apt.
 # It is idempotent: each step checks whether its result is already in place and skips the work if so.
 # Used by developers, by agent sessions (the cloud environment's setup script calls it) and by CI, so all three test with the same tools.
 #
@@ -28,7 +30,7 @@ set -euo pipefail
 
 NODE_VERSION=24.22.3 # LTS security release of 2026-11-10 (high-severity fixes in HTTP/2, TLS and the HTTP parser); must equal .nvmrc
 PLAYWRIGHT_VERSION=1.65.1 # must equal @playwright/test in package.json; the browser builds below belong to this version
-APT_SNAPSHOT=20261025T000000Z # Ubuntu archive as of 2026-10-25 00:00 UTC, the same snapshot as the BayanDocs cloud environment
+APT_SNAPSHOT=20261116T000000Z # Ubuntu archive as of 2026-11-16 00:00 UTC: the snapshot of deps/ubuntu-packages.lock (a test keeps them equal)
 
 # SHA-256 of each Node.js download, from nodejs.org's SHASUMS256.txt for v24.22.3, whose signature by a Node.js release key was checked.
 node_sha256() {
@@ -66,6 +68,8 @@ d3cc730027105a014d0cbf53925bd7eababbdf8dbccbb4a3a1713c5f631dbcaf  https://cdn.pl
 '
 
 # Ubuntu 24.04 packages the browsers need: Playwright 1.65.1's own lists (fonts and tools, Chromium, Firefox, WebKit), merged.
+# Each one must also be a requested package of deps/ubuntu-packages.lock (a test checks it): add a new one there too, with the lock
+# command, or CI's container would lack it and this script would fall back to apt there.
 APT_PACKAGES='
   xvfb fonts-noto-color-emoji fonts-unifont libfontconfig1 libfreetype6 xfonts-cyrillic xfonts-scalable
   fonts-liberation fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf fonts-freefont-ttf libasound2t64
