@@ -95,7 +95,11 @@ test("after any other refusal of hello the app stops with the stop message, with
   expect(await problems()).toEqual([]);
 });
 
-/** Messages from the engine that break the protocol (spec §14.1 item 5), each handed to the app as the engine's worker would send it. */
+/**
+ * Messages from the engine that break the protocol (spec §14.1 item 5), each handed to the app as the engine's worker would send it. Large
+ * parts are left out here and built in the page (`childrenBuiltInPage`): handing hundreds of thousands of objects from the test to the
+ * page takes Playwright longer than a test may run on a slow machine, while the app itself refuses such a tree before it walks it.
+ */
 const violations: Record<string, (docId: number) => unknown> = {
   "a message of protocol version 0": (docId) => ({
     v: 0,
@@ -127,19 +131,15 @@ const violations: Record<string, (docId: number) => unknown> = {
     seq: 1_000_000,
     payload: {
       doc_id: docId,
-      changes: [
-        {
-          kind: "replace",
-          node: {
-            id: 1,
-            role: "document",
-            children: Array.from({ length: 200_001 }, (_, index) => ({ id: 2_000_000 + index, role: "paragraph" })),
-          },
-        },
-      ],
+      changes: [{ kind: "replace", node: { id: 1, role: "document", children: [] } }],
       caret: null,
     },
   }),
+};
+
+/** For these messages, the page gives the node of the first change this many paragraphs as its children before it hands them over. */
+const childrenBuiltInPage: Record<string, number> = {
+  "an accessibility tree with a node of 200,001 children": 200_001,
 };
 
 for (const [what, message] of Object.entries(violations)) {
@@ -151,11 +151,20 @@ for (const [what, message] of Object.entries(violations)) {
     const docId = await page.evaluate(() => (globalThis as unknown as { __docId: number }).__docId);
     // Playwright hands the message to the page as the page's own objects, as a worker's message would arrive.
     await page.evaluate(
-      (data) =>
+      ({ data, children }) => {
+        const change = (data as { payload?: { changes?: { node: { children: unknown[] } }[] } } | null)?.payload
+          ?.changes?.[0];
+        if (children > 0 && change !== undefined) {
+          change.node.children = Array.from({ length: children }, (_, index) => ({
+            id: 2_000_000 + index,
+            role: "paragraph",
+          }));
+        }
         (globalThis as unknown as { __engineWorker: Worker }).__engineWorker.dispatchEvent(
           new MessageEvent("message", { data }),
-        ),
-      message(docId),
+        );
+      },
+      { data: message(docId), children: childrenBuiltInPage[what] ?? 0 },
     );
     await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "failed");
     await expect(page.locator(".document-status")).toHaveText(stopped);
