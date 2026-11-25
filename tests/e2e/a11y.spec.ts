@@ -289,6 +289,161 @@ test("a part without the child its range starts with breaks the protocol, and th
   expect(await partQueries(page)).toHaveLength(1);
 });
 
+test("a part that the engine refuses is not asked for again, also after updates, and the rest of the document stays", async ({
+  page,
+}) => {
+  const problems = await collectProblems(page);
+  await keepWorker(page);
+  await standInForParts(page, { extra: 2_500, perMessage: 1_000, refuse: true });
+  await page.goto("/");
+  await waitForDocument(page);
+  const mirror = page.getByTestId("a11y-mirror");
+  const last = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
+  await releaseParts(page);
+  await expect.poll(() => partQueries(page)).toHaveLength(1);
+  // Updates afterwards, as typing brings, here replacing the mock document's last paragraph with itself: the node whose part the engine
+  // refused leaves the queue for good, so nothing is asked for again.
+  await page.evaluate((id) => {
+    const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
+    for (const seq of [3_000_000, 3_000_001, 3_000_002]) {
+      const node = { id, role: "paragraph", text: "This is the end of the mock document." };
+      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      scope.__engineWorker.dispatchEvent(
+        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } }),
+      );
+    }
+  }, last);
+  await page.waitForTimeout(500);
+  expect(await partQueries(page)).toHaveLength(1);
+  // The children the first message held stay; a refused part is no violation, and the app keeps running.
+  await expect(mirror.locator(`[data-node-id="${partId(999)}"]`)).toBeAttached();
+  await expect(mirror.locator(`[data-node-id="${partId(1_000)}"]`)).toHaveCount(0);
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready");
+  expect(await problems()).toEqual([]);
+});
+
+test("a part of 199,999 children, as many as one message holds, is mirrored in full, and loading then stops", async ({
+  page,
+}) => {
+  const problems = await collectProblems(page);
+  await keepWorker(page);
+  // The reply for the whole document holds the mock document's own children only, and the one part all 199,999 added paragraphs: with
+  // its node, 200,000 nodes, the most one message may hold (spec §14.7 item 1). Browsers refuse a call with that many arguments, so the
+  // mirror must add them one at a time. The added paragraphs have no text, which only spares the browser's layout work.
+  await standInForParts(page, { extra: 199_999, firstMessage: 0, perMessage: 199_999, withoutText: true });
+  await page.goto("/");
+  await waitForDocument(page);
+  const mirror = page.getByTestId("a11y-mirror");
+  await focusTheEditableLine(page);
+  // Everything the test needs to find is found before the part arrives. Once the page holds 200,000 more elements, every Playwright action
+  // takes a snapshot of them for the trace, so the rest happens in two actions, in the page.
+  const editable = await page.getByRole("textbox", { name: "Editable line" }).getAttribute("data-node-id");
+  const last = await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id");
+  await releaseParts(page);
+  await page.waitForFunction((id) => document.querySelector(`[data-node-id="${id}"]`) !== null, partId(199_998));
+  const result = await page.evaluate(
+    ({ editable, last }) => {
+      const scope = globalThis as unknown as {
+        __engineWorker: Worker;
+        __docId: number;
+        __partQueries: { start: number; count: number }[];
+      };
+      // Every child once, in order, the added ones after the mock document's own.
+      const own = new Set<number>();
+      let added = 0;
+      let inOrder = true;
+      for (const child of document.querySelector('[data-testid="a11y-mirror"] [role="document"]')?.children ?? []) {
+        const id = Number(child.getAttribute("data-node-id"));
+        if (id < 9_000_000) {
+          if (added > 0 || own.has(id)) inOrder = false;
+          own.add(id);
+        } else {
+          if (id !== 9_000_000 + added) inOrder = false;
+          added += 1;
+        }
+      }
+      const queriesForThePart = scope.__partQueries.slice();
+      // An update after the part, as typing brings, here replacing the mock document's last paragraph with itself. The mirror applies it
+      // while its event is dispatched, and with all its node's children held it asks for no part again.
+      const node = { id: Number(last), role: "paragraph", text: "This is the end of the mock document." };
+      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      scope.__engineWorker.dispatchEvent(
+        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 3_000_000, payload } }),
+      );
+      return {
+        own: own.size,
+        added,
+        inOrder,
+        queriesForThePart,
+        queriesAfterTheUpdate: scope.__partQueries.length,
+        replaced: document.querySelector(`[data-node-id="${last}"]`)?.textContent ?? null,
+        // Keyboard focus stayed in the editable line while the part arrived.
+        focused: document.activeElement?.getAttribute("data-node-id") === editable,
+        engine: document.querySelector(".document-view")?.getAttribute("data-engine-state") ?? null,
+      };
+    },
+    { editable, last },
+  );
+  expect(result).toEqual({
+    own: result.own,
+    added: 199_999,
+    inOrder: true,
+    queriesForThePart: [{ start: result.own, count: 199_999 }],
+    queriesAfterTheUpdate: 1,
+    replaced: "This is the end of the mock document.",
+    focused: true,
+    engine: "ready",
+  });
+  expect(result.own).toBeGreaterThan(10);
+  expect(await problems()).toEqual([]);
+});
+
+test("an update that replaces a node holding 150,001 children forgets them all and keeps the app running", async ({
+  page,
+}) => {
+  const problems = await collectProblems(page);
+  await keepWorker(page);
+  await page.goto("/");
+  await waitForDocument(page);
+  const documentId = Number(
+    await page.getByTestId("a11y-mirror").locator('[role="document"]').getAttribute("data-node-id"),
+  );
+  // Two updates as the engine would send them, built and checked in the page, in one action (each action with 150,000 more elements
+  // would take a snapshot of them for the trace): the first gives the document node 150,001 paragraphs (150,002 nodes, within one
+  // message's 200,000), the second replaces it with a single paragraph, which forgets all of them. Browsers refuse a call with that many
+  // arguments, so the mirror must walk them one at a time. The mirror applies an update while its event is dispatched.
+  const result = await page.evaluate((documentId) => {
+    const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
+    const replaceDocument = (seq: number, paragraphs: number, firstId: number) => {
+      const node = {
+        id: documentId,
+        role: "document",
+        children: Array.from({ length: paragraphs }, (_, index) => ({ id: firstId + index, role: "paragraph" })),
+      };
+      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      scope.__engineWorker.dispatchEvent(
+        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } }),
+      );
+    };
+    const held = (id: number) => document.querySelector(`[data-testid="a11y-mirror"] [data-node-id="${id}"]`) !== null;
+    replaceDocument(3_000_001, 150_001, 5_000_000);
+    const afterFirst = { first: held(5_000_000), last: held(5_150_000) };
+    replaceDocument(3_000_002, 1, 6_000_000);
+    return {
+      afterFirst,
+      afterSecond: { replacement: held(6_000_000), first: held(5_000_000), last: held(5_150_000) },
+      engine: document.querySelector(".document-view")?.getAttribute("data-engine-state") ?? null,
+    };
+  }, documentId);
+  expect(result).toEqual({
+    afterFirst: { first: true, last: true },
+    afterSecond: { replacement: true, first: false, last: false },
+    engine: "ready",
+  });
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready");
+  expect(await problems()).toEqual([]);
+});
+
 /**
  * Times the mirror's work on a11y.updates that the test hands the app as the engine would send them, and returns how long the mirror took
  * for each timed update, in milliseconds, one list for each of `sizes`: the mirror applies an update synchronously while its event is

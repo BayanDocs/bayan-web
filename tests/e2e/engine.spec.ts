@@ -12,7 +12,15 @@ import { waitForDocument } from "./document.ts";
 async function watchInit(page: Page, integrity?: string): Promise<void> {
   await page.addInitScript((replacement) => {
     const post = Worker.prototype.postMessage;
+    // The first message that each worker receives, as the app sent it.
+    const started = new WeakSet<Worker>();
+    const firstMessages: unknown[] = [];
+    Object.assign(globalThis, { __firstMessages: firstMessages });
     Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      if (!started.has(this)) {
+        started.add(this);
+        firstMessages.push(message);
+      }
       const envelope = message as { worker?: unknown } | null;
       if (envelope?.worker === "init") {
         Object.assign(globalThis, { __init: message });
@@ -149,13 +157,18 @@ for (const file of ["bayan-worker.js", "bayan_wasm.js", "bayan_wasm_bg.wasm"]) {
   });
 }
 
-test("the app gives the worker host the engine module's SHA-384, which matches the module it serves (spec §14.8)", async ({
+test("the worker's first message is init, with the engine module's SHA-384, which matches the module served (spec §14.8)", async ({
   page,
 }) => {
   await watchInit(page);
   await page.goto("/");
   await waitForDocument(page);
   const init = await initMessage(page);
+  // It is the first message the worker receives, and the only worker is the engine's: given any other message first, the worker host
+  // would start without a hash and fetch the module unchecked.
+  expect(await page.evaluate(() => (globalThis as unknown as { __firstMessages: unknown[] }).__firstMessages)).toEqual([
+    { worker: "init", wasm_url: init.wasm_url, wasm_integrity: init.wasm_integrity },
+  ]);
   expect(init.wasm_url).toMatch(/^\/assets\/engine-[0-9a-f]{16}\/bayan_wasm_bg\.wasm$/);
   const module = await page.request.get(init.wasm_url);
   expect(module.ok()).toBe(true);

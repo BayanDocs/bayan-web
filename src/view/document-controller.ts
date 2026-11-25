@@ -110,6 +110,12 @@ interface Probe {
   tileDrawn: boolean;
 }
 
+/**
+ * The most invalidated regions a probe keeps. The engine invalidates a few regions per change; a probe only needs some of them to see a
+ * re-rendered tile in one, and an engine that sends more must not make every frame slower.
+ */
+const MAX_PROBE_REGIONS = 64;
+
 function finished(probe: Probe): boolean {
   return probe.replied && (!probe.overlay || probe.overlayDrawn) && (probe.invalidated.length === 0 || probe.tileDrawn);
 }
@@ -213,7 +219,13 @@ export class DocumentController {
       if (payload.doc_id !== this.#docId) return;
       this.#compositor.invalidate(payload.regions, payload.revision);
       const probe = this.#probes.findLast((candidate) => candidate.replied);
-      probe?.invalidated.push(...payload.regions);
+      // One region at a time, up to the cap: the engine's list spread into push() could pass more arguments than a browser allows.
+      if (probe !== undefined) {
+        for (const region of payload.regions) {
+          if (probe.invalidated.length >= MAX_PROBE_REGIONS) break;
+          probe.invalidated.push(region);
+        }
+      }
     });
     client.on("overlay.update", (payload) => {
       if (payload.doc_id !== this.#docId) return;
@@ -292,6 +304,8 @@ export class DocumentController {
     this.#resizeObserver?.disconnect();
     this.#devicePixelObserver?.disconnect();
     this.#client?.terminate();
+    // The mirror lets go of the document, so that no part load that the stopped client refuses starts another one.
+    this.#mirror.clear();
     this.#compositor.destroy();
     this.#bridge.destroy();
   }

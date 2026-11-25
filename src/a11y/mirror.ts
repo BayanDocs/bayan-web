@@ -2,7 +2,8 @@
 // but screen readers read, because the pages themselves are pixels on a canvas. Headings, paragraphs, lists and tables become the HTML
 // elements with those meanings, built with safe DOM APIs only (no HTML from strings); the editable text becomes the input bridge's
 // element, which holds the engine's text and caret, so that a screen reader follows the engine's caret there (the caret-sync prototype).
-// a11y.update replaces changed nodes in place, and leaves the bridge's element where it is so it never loses focus.
+// a11y.update replaces changed nodes in place; a change that replaces the editable node itself leaves the bridge's element where it is, so
+// that it keeps focus.
 //
 // Protocol v1 (spec §14.7 item 1). The engine keeps every tree within the limits of 64 levels and 200,000 nodes per message, flattening
 // what lies deeper into the text of the node at level 64, so the mirror builds every node it receives as an element of its own, after
@@ -10,15 +11,22 @@
 // the mirror reports it instead of building anything (onViolation), so that the app stops using the engine. Where a node's children do
 // not all fit into one message, the node holds a run of them and says how many it has; the mirror shows the node with all its children
 // by loading the parts it lacks with query.a11y { node, children: { start, count } }, one part at a time, as soon as it learns of them.
-// A part fills a gap next to the children the mirror holds and never replaces one, so loading never moves the element that has focus.
+// A part fills a gap next to the children the mirror holds and never replaces one, so loading moves none of the elements the mirror holds.
+// The one exception is the bridge's element: an editable node that first arrives in a part, while the mirror holds none, takes it there,
+// and with it any focus it had (a follow-up for WEB-005).
 //
 // A faulty engine cannot keep the mirror loading: each answer must hold the child its range starts with (so every answer adds to the
 // node's fixed number of children), no more than the range asked for, the node's unchanged number of children and only identifiers new
-// to the mirror; anything else breaks the protocol. A part that the engine refuses is not asked for again until the node changes. And the
-// mirror loads no more parts once it holds MAX_MIRROR_NODES nodes, the shell's own bound on the elements it builds.
+// to the mirror; anything else breaks the protocol. A node whose part the engine refuses leaves the queue of nodes to load for good; only
+// a replacement, which is a node of its own, joins it again. And the mirror loads no more parts once it holds MAX_MIRROR_NODES nodes. That
+// bound applies to loading parts only: a11y.update builds what each change holds, up to the protocol's 200,000 nodes per message, however
+// large the mirror is (bounding the mirror across updates is a follow-up for CORE-128 and WEB-102).
 //
 // Every step takes time in proportion to what it touches: building visits each node once, a replacement forgets only the subtree it
-// replaces, and a part is inserted next to its neighbours, found by binary search. No work recurses deeper than the tree's 64 levels.
+// replaces, and a part joins the end of one of its node's lists (Mirrored), so that finding a node's next gap and placing a part take
+// constant time, however its parts arrive. Children are added and walked one at a time and never spread into a call, whose arguments
+// browsers limit to about 100,000, while a message may hold 200,000 nodes and a node more once its parts are loaded. No work recurses
+// deeper than the tree's 64 levels.
 //
 // While no document is open the input bridge's element is inert, out of the tab order and the accessibility tree, so that it is never a
 // text box with no name and no text. The mirror is also marked translate="no": a browser's page translation would otherwise send the
@@ -30,7 +38,8 @@ import { type ChildRun, checkTree, childRun, type Gap, gapsOf } from "./tree.ts"
 
 /**
  * The most nodes the mirror holds before it stops loading parts: five times what one message may hold. Beyond it a document's remaining
- * parts stay unloaded rather than make the browser build millions of elements (a follow-up decides loading them as the reader moves).
+ * parts stay unloaded rather than make the browser build millions of elements (a follow-up decides loading them as the reader moves). It
+ * bounds part loading only, not a11y.update, which builds what each change holds (a follow-up bounds the mirror across updates).
  */
 export const MAX_MIRROR_NODES = 1_000_000;
 
@@ -43,12 +52,17 @@ interface Mirrored {
   readonly parent: Mirrored | null;
   /** Its index among its parent's children. */
   readonly index: number;
-  /** The children it holds, by index, in ascending order. */
-  readonly children: Mirrored[];
+  /**
+   * The children it holds, in three unbroken runs by index: `run`, those its own message held, from index `runStart`; `before`, those that
+   * parts added in front of the run, from index 0; and `after`, those that parts added behind it. Parts fill the first gap first, so these
+   * are all the children it holds, and a child's place follows from its index without a search.
+   */
+  readonly run: Mirrored[];
+  readonly runStart: number;
+  readonly before: Mirrored[];
+  readonly after: Mirrored[];
   /** How many children it has; more than it holds while parts are missing. */
   readonly count: number;
-  /** The engine refused to load one of its parts: none is asked for again until the node changes. */
-  refused: boolean;
 }
 
 export interface MirrorOptions {
@@ -58,28 +72,23 @@ export interface MirrorOptions {
   readonly onViolation: () => void;
 }
 
-/** The first entry of `children` whose index is `index` or more (binary search). */
-function firstFrom(children: readonly Mirrored[], index: number): number {
-  let low = 0;
-  let high = children.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if ((children[middle] as Mirrored).index < index) low = middle + 1;
-    else high = middle;
+/** The first range of a mirrored node's children that it lacks, in constant time: in front of its run, or behind it. */
+function firstGap(node: Mirrored): Gap | undefined {
+  if (node.before.length < node.runStart) {
+    return { node: node.id, start: node.before.length, count: node.runStart - node.before.length };
   }
-  return low;
+  const next = node.runStart + node.run.length + node.after.length;
+  return next < node.count ? { node: node.id, start: next, count: node.count - next } : undefined;
 }
 
-/** The gaps of a mirrored node: the ranges between the children it holds, and after the last. */
-function gapsOfMirrored(node: Mirrored): Gap[] {
-  const gaps: Gap[] = [];
-  let next = 0;
-  for (const child of node.children) {
-    if (child.index > next) gaps.push({ node: node.id, start: next, count: child.index - next });
-    next = child.index + 1;
-  }
-  if (next < node.count) gaps.push({ node: node.id, start: next, count: node.count - next });
-  return gaps;
+/** The list of a node's children that holds the child with index `index`, and its place there; undefined if the node lacks that child. */
+function placeOf(node: Mirrored, index: number): { readonly list: Mirrored[]; readonly position: number } | undefined {
+  if (index < node.before.length) return { list: node.before, position: index };
+  const inRun = index - node.runStart;
+  if (inRun >= 0 && inRun < node.run.length) return { list: node.run, position: inRun };
+  const inAfter = inRun - node.run.length;
+  if (inAfter >= 0 && inAfter < node.after.length) return { list: node.after, position: inAfter };
+  return undefined;
 }
 
 export class AccessibilityMirror {
@@ -87,8 +96,13 @@ export class AccessibilityMirror {
   readonly #bridge: InputBridge;
   readonly #options: MirrorOptions;
   readonly #nodes = new Map<number, Mirrored>();
-  /** The nodes that lack parts of their children, in the order the mirror learned of them. */
-  readonly #partial = new Set<Mirrored>();
+  /**
+   * The nodes that lack parts of their children, in the order the mirror learned of them, from `#partialHead` on. Parts load for the node
+   * at the head until it holds all its children, the engine refuses one of them, or the node is replaced; then the head moves on and never
+   * comes back, so that no node is looked at twice.
+   */
+  #partial: Mirrored[] = [];
+  #partialHead = 0;
   #editable: A11yNode | undefined;
   /** The node the bridge's element stands for. */
   #editableId: number | undefined;
@@ -122,7 +136,7 @@ export class AccessibilityMirror {
       return;
     }
     this.#forgetAll();
-    const root = this.#build(tree.root, 1, null, 0);
+    const root = this.#build(tree.root, 1, null, 0, () => undefined);
     this.#container.replaceChildren(root.element);
     this.#keepBridge();
     this.#bridge.element.inert = false;
@@ -145,20 +159,23 @@ export class AccessibilityMirror {
       }
       if (old === undefined) continue;
       // The new subtree may reuse the identifiers of the one it replaces, but none from elsewhere: that would make a node appear twice.
-      const leaving = new Set(this.#subtree(old).map((leaver) => leaver.id));
+      const leaving = new Set<number>();
+      for (const leaver of this.#subtree(old)) leaving.add(leaver.id);
       if (checked.ids.some((reused) => this.#nodes.has(reused) && !leaving.has(reused))) {
         this.#violation();
         return;
       }
       this.#forget(old);
-      const replacement = this.#build(change.node, old.level, old.parent, old.index);
-      if (old.parent === null) {
+      const parent = old.parent;
+      const replacement = this.#build(change.node, old.level, parent, old.index, (placed) => {
+        const place = parent === null ? undefined : placeOf(parent, old.index);
+        if (place !== undefined) place.list[place.position] = placed;
+      });
+      if (parent === null) {
         // The document node itself.
         this.#container.replaceChildren(replacement.element);
-      } else {
-        const siblings = old.parent.children;
-        siblings[firstFrom(siblings, old.index)] = replacement;
-        if (replacement.element !== old.element) old.element.replaceWith(replacement.element);
+      } else if (replacement.element !== old.element) {
+        old.element.replaceWith(replacement.element);
       }
     }
     this.#keepBridge();
@@ -203,28 +220,31 @@ export class AccessibilityMirror {
     this.#generation += 1;
     this.#loading = false;
     this.#nodes.clear();
-    this.#partial.clear();
+    this.#partial = [];
+    this.#partialHead = 0;
     this.#editable = undefined;
     this.#editableId = undefined;
   }
 
-  /** A node and every node below it, without recursion. */
+  /** A node and every node below it, without recursion, one child at a time. */
   #subtree(node: Mirrored): Mirrored[] {
     const nodes: Mirrored[] = [];
     const pending = [node];
     while (pending.length > 0) {
       const next = pending.pop() as Mirrored;
       nodes.push(next);
-      pending.push(...next.children);
+      for (const child of next.before) pending.push(child);
+      for (const child of next.run) pending.push(child);
+      for (const child of next.after) pending.push(child);
     }
     return nodes;
   }
 
   /** Forgets a subtree that is about to be replaced, in time proportional to it. */
   #forget(node: Mirrored): void {
+    // Nodes of the queue that leave are passed over when the head reaches them (#loadNext).
     for (const leaver of this.#subtree(node)) {
       if (this.#nodes.get(leaver.id) === leaver) this.#nodes.delete(leaver.id);
-      this.#partial.delete(leaver);
       if (leaver.id === this.#editableId) {
         // The replacement says again whether there is editable text, and where.
         this.#editable = undefined;
@@ -234,11 +254,19 @@ export class AccessibilityMirror {
   }
 
   /**
-   * Builds the mirrored node of a checked node on `level`, with its children's elements. The bridge's element stands for the editable node,
-   * unless it already stands for another node of the mirror (only a part could bring a second one): then that node gets an element of its
-   * own, so that the bridge's element, which may have focus, is never moved.
+   * Builds the mirrored node of a checked node on `level`, with its children's elements. `place` puts it among its parent's children as
+   * soon as the mirror registers it, before anything below it is built, so that whatever might fail later, every node the mirror holds is
+   * also among its parent's children. The bridge's element stands for the editable node, unless it already stands for another node of the
+   * mirror (only a part could bring a second one): then that node gets an element of its own, so that the bridge's element, which may have
+   * focus, is not moved.
    */
-  #build(node: A11yNode, level: number, parent: Mirrored | null, index: number): Mirrored {
+  #build(
+    node: A11yNode,
+    level: number,
+    parent: Mirrored | null,
+    index: number,
+    place: (mirrored: Mirrored) => void,
+  ): Mirrored {
     const bridged =
       node.editable === true &&
       (this.#editableId === undefined || this.#editableId === node.id || !this.#nodes.has(this.#editableId));
@@ -249,41 +277,44 @@ export class AccessibilityMirror {
       level,
       parent,
       index,
-      children: [],
+      run: [],
       // The editable text's children are not shown: the bridge's element shows its text.
+      runStart: bridged ? 0 : run.start,
+      before: [],
+      after: [],
       count: bridged ? 0 : run.count,
-      refused: false,
     };
     const element = mirrored.element;
     element.dataset["nodeId"] = String(node.id);
     this.#nodes.set(node.id, mirrored);
+    place(mirrored);
     if (bridged) {
       this.#editable = node;
       this.#editableId = node.id;
       return mirrored;
     }
+    if (gapsOf(node.id, run).length > 0) this.#partial.push(mirrored);
     if (node.name !== undefined && node.name !== null && node.role === "document") {
       element.setAttribute("aria-label", node.name);
     }
     if (node.text !== undefined && node.text !== null) element.append(node.text);
     const children = node.children ?? [];
     for (const [offset, child] of children.entries()) {
-      const built = this.#build(child, level + 1, mirrored, run.start + offset);
-      mirrored.children.push(built);
+      const built = this.#build(child, level + 1, mirrored, run.start + offset, (placed) => mirrored.run.push(placed));
       element.append(built.element);
     }
-    if (gapsOf(node.id, run).length > 0) this.#partial.add(mirrored);
     return mirrored;
   }
 
   /** Loads the next part that a node lacks, one at a time, unless the mirror holds as many nodes as it may. */
   #loadNext(): void {
     if (this.#loading || this.#broken || this.#nodes.size >= MAX_MIRROR_NODES) return;
-    for (const node of this.#partial) {
-      if (node.refused) continue;
-      const [gap] = gapsOfMirrored(node);
+    while (this.#partialHead < this.#partial.length) {
+      const node = this.#partial[this.#partialHead] as Mirrored;
+      // A node that was replaced or forgotten, or that now holds all its children, needs nothing more.
+      const gap = this.#nodes.get(node.id) === node ? firstGap(node) : undefined;
       if (gap === undefined) {
-        this.#partial.delete(node);
+        this.#passHead();
         continue;
       }
       this.#loading = true;
@@ -298,11 +329,22 @@ export class AccessibilityMirror {
         () => {
           if (generation !== this.#generation) return;
           this.#loading = false;
-          node.refused = true;
+          // Refused: none of the node's parts is asked for again. It is still the head, since nothing else moves the head while a part
+          // is on its way.
+          if (this.#partial[this.#partialHead] === node) this.#passHead();
           this.#loadNext();
         },
       );
       return;
+    }
+  }
+
+  /** Moves the queue's head past its node, and lets go of the passed part of the queue once it outweighs the rest. */
+  #passHead(): void {
+    this.#partialHead += 1;
+    if (this.#partialHead >= 1_024 && this.#partialHead * 2 >= this.#partial.length) {
+      this.#partial = this.#partial.slice(this.#partialHead);
+      this.#partialHead = 0;
     }
   }
 
@@ -325,19 +367,22 @@ export class AccessibilityMirror {
       this.#violation();
       return;
     }
-    const children = tree.root.children ?? [];
-    const at = firstFrom(node.children, run.start);
-    const before = node.children[at]?.element ?? null;
+    // A gap in front of the run fills `before`, one behind it `after`, both at their ends. Each child joins its list as the mirror
+    // registers it (#build), so the lists and the mirror's nodes always agree; the elements follow as one fragment.
+    const inFront = gap.start < node.runStart;
+    const list = inFront ? node.before : node.after;
     const fragment = document.createDocumentFragment();
-    const built: Mirrored[] = [];
+    const children = tree.root.children ?? [];
     for (const [offset, child] of children.entries()) {
-      const mirrored = this.#build(child, node.level + 1, node, run.start + offset);
-      built.push(mirrored);
-      fragment.append(mirrored.element);
+      const built = this.#build(child, node.level + 1, node, gap.start + offset, (placed) => list.push(placed));
+      fragment.append(built.element);
     }
-    node.element.insertBefore(fragment, before);
-    node.children.splice(at, 0, ...built);
-    if (gapsOfMirrored(node).length === 0) this.#partial.delete(node);
+    // In front of the run's first element, or after everything the node holds.
+    const next = inFront ? (node.run[0] ?? node.after[0]) : undefined;
+    node.element.insertBefore(
+      fragment,
+      next !== undefined && next.element.parentNode === node.element ? next.element : null,
+    );
   }
 
   #elementFor(node: A11yNode): HTMLElement {

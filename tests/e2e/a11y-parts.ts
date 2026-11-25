@@ -4,24 +4,31 @@ import type { Page } from "@playwright/test";
 // (a11y.spec.ts) and of axe's rules in that state (axe.spec.ts). The mock document is small, so the test stands in for the engine where its
 // trees are concerned: before the app starts, it wraps Worker.prototype.postMessage and listens to the engine's worker ahead of the app.
 // The real engine's reply to the app's query.a11y for the whole document reaches the app with `extra` paragraphs added after the mock
-// document's own children, of which it holds only the first `perMessage`, with child_count and children_start, as the engine does when the
-// children do not fit into one message; and the app's query.a11y with a children range for the document node is answered by the test,
-// with at most `perMessage` of the requested children each, never reaching the engine. Everything else is the real engine's.
+// document's own children, of which it holds only the first `firstMessage` (by default `perMessage`), with child_count and children_start,
+// as the engine does when the children do not fit into one message; and the app's query.a11y with a children range for the document node
+// is answered by the test, with at most `perMessage` of the requested children each, never reaching the engine. Everything else is the
+// real engine's.
 //
 // The answers wait until the test calls releaseParts(), so that it can first put keyboard focus in the document. With `withoutStart`, an
-// answer leaves out the child its range starts with, which breaks the protocol (§14.7 item 1).
+// answer leaves out the child its range starts with, which breaks the protocol (§14.7 item 1); with `refuse`, every answer is an error.
 
 export interface PartsOptions {
   readonly extra: number;
   readonly perMessage: number;
+  /** How many of the added paragraphs the reply for the whole document holds; `perMessage` when left out. */
+  readonly firstMessage?: number;
   readonly withoutStart?: boolean;
+  /** Added paragraphs without text, which the browser lays out faster when there are hundreds of thousands. */
+  readonly withoutText?: boolean;
+  /** Answers every part with an error, as an engine that refuses to load them. */
+  readonly refuse?: boolean;
 }
 
 /** The identifier of the added paragraph i, far from the mock document's own. */
 export const partId = (index: number) => 9_000_000 + index;
 
 export async function standInForParts(page: Page, options: PartsOptions): Promise<void> {
-  await page.addInitScript(({ extra, perMessage, withoutStart }) => {
+  await page.addInitScript(({ extra, perMessage, firstMessage, withoutStart, withoutText, refuse }) => {
     interface Node {
       id: number;
       role: string;
@@ -46,6 +53,15 @@ export async function standInForParts(page: Page, options: PartsOptions): Promis
         engineWorker?.dispatchEvent(new MessageEvent("message", { data: { __standIn: true, ...(data as object) } })),
       );
     const answer = (id: number, start: number, count: number) => {
+      if (refuse === true) {
+        deliver({
+          v: 1,
+          re: id,
+          ok: false,
+          error: { code: "internal", message_id: "engine-error-internal", args: {} },
+        });
+        return;
+      }
       const from = withoutStart ? start + 1 : start;
       const children = all.slice(from, Math.min(start + count, from + perMessage));
       const part = { ...(root as Node), child_count: all.length, children_start: from, children };
@@ -77,16 +93,15 @@ export async function standInForParts(page: Page, options: PartsOptions): Promis
           const own = payload.root.children ?? [];
           const added = Array.from(
             { length: extra },
-            (_, index): Node => ({
-              id: 9_000_000 + index,
-              role: "paragraph",
-              text: `Added paragraph ${index}`,
-            }),
+            (_, index): Node =>
+              withoutText === true
+                ? { id: 9_000_000 + index, role: "paragraph" }
+                : { id: 9_000_000 + index, role: "paragraph", text: `Added paragraph ${index}` },
           );
           all = [...own, ...added];
           const { children: _, ...fields } = payload.root;
           root = fields;
-          const held = own.length + perMessage;
+          const held = own.length + (firstMessage ?? perMessage);
           deliver({
             ...data,
             payload: {

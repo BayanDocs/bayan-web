@@ -121,7 +121,7 @@ export function checkTree(root: unknown, rootLevel: number): CheckedTree | null 
     if (ids.length + pending.length + children.length > MAX_TREE_NODES) return null;
     const run = childRun(value);
     if (run === null) return null;
-    gaps.push(...gapsOf(id, run));
+    for (const gap of gapsOf(id, run)) gaps.push(gap);
     for (let child = children.length - 1; child >= 0; child -= 1)
       pending.push({ value: children[child], level: level + 1 });
   }

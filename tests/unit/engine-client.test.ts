@@ -157,6 +157,19 @@ describe("EngineClient", () => {
     second.worker.answer({ worker: "failed", reason: "load_failed" });
     expect(second.client.state).toEqual({ kind: "failed", reason: "load_failed" });
   });
+
+  it("treats a worker error after the engine was ready as a failed worker, as the worker host's own failed message", async () => {
+    const { worker, client } = setup();
+    const pending = client.request("hello", { protocol_versions: [1] });
+    worker.answer({ worker: "ready", engine_version: "0.0.0" });
+    expect(client.state).toEqual({ kind: "ready", engineVersion: "0.0.0" });
+    const error = new Event("error", { cancelable: true });
+    worker.dispatchEvent(error);
+    expect(error.defaultPrevented).toBe(true);
+    expect(client.state).toEqual({ kind: "failed", reason: "worker_failed" });
+    expect(worker.terminated).toBe(true);
+    await expect(pending).rejects.toBeInstanceOf(EngineUnavailableError);
+  });
 });
 
 describe("protocol violations (spec §14.1 item 5)", () => {

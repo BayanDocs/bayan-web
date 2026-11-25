@@ -69,7 +69,9 @@ export function keyDataOf(manifest: Pick<UiManifest, "commands" | "keys">): KeyD
   const labels = new Map<string, readonly string[]>();
   for (const command of manifest.commands) {
     const action = command.shell_action;
-    if (action === undefined || action === null) bindings.push(...command.bindings.map(entryOf));
+    // One at a time: a manifest's list spread into push() could pass more arguments than a browser allows.
+    if (action === undefined || action === null)
+      for (const binding of command.bindings) bindings.push(entryOf(binding));
     if (action === undefined || action === null || knownShellActions.has(action)) {
       labels.set(
         command.id,

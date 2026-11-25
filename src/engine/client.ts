@@ -149,9 +149,10 @@ export class EngineClient {
     this.#isBitmap = options.isBitmap ?? isImageBitmap;
     worker.addEventListener("message", (event: MessageEvent<unknown>) => this.#receive(event.data));
     // A module worker that cannot be loaded (network error, refused by the Content Security Policy) reports a plain error event.
+    // After ready, the engine was running: its worker failed, as with the worker host's own "failed" control message.
     worker.addEventListener("error", (event) => {
       event.preventDefault();
-      this.#stop("load_failed");
+      this.#stop(this.#state.kind === "ready" ? "worker_failed" : "load_failed");
     });
     // A message that cannot be deserialized is not a plain object either (§14.1 item 5).
     worker.addEventListener("messageerror", () => this.#stop("protocol_violation"));
