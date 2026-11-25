@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  conformanceFileNames,
   engineManifest,
   integrityOf,
   noticeFileNames,
@@ -24,8 +25,10 @@ function fakePackage(changes: Record<string, string | null> = {}): string {
   const files: Record<string, string | null> = {
     "BUILT-FROM": `commit=${commit}\n`,
     "package.json": JSON.stringify({ name: "@bayandocs/engine-wasm", version: "0.0.0" }),
-    "engine-protocol.d.ts": "export type ProtocolVersion = 0;\n",
-    ...Object.fromEntries([...runtimeFileNames, ...noticeFileNames].map((name) => [name, `contents of ${name}`])),
+    "engine-protocol.d.ts": "export type ProtocolVersion = 1;\n",
+    ...Object.fromEntries(
+      [...runtimeFileNames, ...noticeFileNames, ...conformanceFileNames].map((name) => [name, `contents of ${name}`]),
+    ),
     ...changes,
   };
   for (const [name, content] of Object.entries(files)) {
@@ -99,6 +102,12 @@ describe("check-engine", () => {
     const other = "0".repeat(40);
     expect(checkEngine(fakePackage(), `commit=${other}\n`)[0]).toMatch(/run scripts\/engine-package\.sh/);
     expect(checkEngine(join(tmpdir(), "no-such-engine-package"), `commit=${commit}\n`)[0]).toMatch(/missing/);
+  });
+
+  it("refuses a package without the conformance vectors that the unit tests run", () => {
+    expect(checkEngine(fakePackage({ "conformance/keys.json": null }), `commit=${commit}\n`)).toEqual([
+      expect.stringMatching(/conformance\/keys\.json is missing; the unit tests run the conformance vectors from it/),
+    ]);
   });
 });
 

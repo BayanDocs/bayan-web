@@ -1,10 +1,84 @@
 import { expect, type Page, test } from "@playwright/test";
+import { partId, partQueries, releaseParts, standInForParts } from "./a11y-parts.ts";
 import { collectProblems } from "./collect-problems.ts";
 import { keepWorker, waitForDocument } from "./document.ts";
 
-// The accessibility mirror v0 (WEB-002, ADR-0020 §4): the engine's accessibility tree as DOM that assistive technology reads, and the
+// The accessibility mirror (WEB-002, ADR-0020 §4): the engine's accessibility tree as DOM that assistive technology reads, and the
 // caret-sync prototype. Screen readers themselves are tested by hand (docs/spikes/WEB-002-report.md, "Screen-reader scripts"); these
-// tests check what the screen readers are given.
+// tests check what the screen readers are given. Protocol v1 (WEB-004, engine protocol §14.7 item 1): the engine keeps its trees within
+// 64 levels and 200,000 nodes per message, the mirror treats a tree beyond them as a protocol violation, and it loads the parts of a
+// node's children that one message did not hold.
+
+const stopped = "The engine stopped. Reload the page to start it again.";
+
+/** Dispatches an a11y.update that replaces node `nodeId` (on level 2) with a chain of paragraphs down to level `deepest`. */
+async function replaceWithChain(page: Page, nodeId: number, deepest: number): Promise<void> {
+  await page.evaluate(
+    ({ nodeId, deepest }) => {
+      interface Node {
+        id: number;
+        role: string;
+        text: string;
+        children?: Node[];
+      }
+      let node: Node | undefined;
+      for (let level = deepest; level >= 2; level -= 1) {
+        const parent: Node = {
+          id: level === 2 ? nodeId : 1_000_000 + level,
+          role: "paragraph",
+          text: `Level ${level}`,
+        };
+        if (node !== undefined) parent.children = [node];
+        node = parent;
+      }
+      const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
+      const update = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      scope.__engineWorker.dispatchEvent(
+        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 1_000_000, payload: update } }),
+      );
+    },
+    { nodeId, deepest },
+  );
+}
+
+/** How many levels of elements the mirror holds below its container. */
+function mirrorDepth(page: Page): Promise<number> {
+  return page.getByTestId("a11y-mirror").evaluate((container) => {
+    let deepest = 0;
+    for (const element of container.querySelectorAll("*")) {
+      let level = 0;
+      for (
+        let current: Element | null = element;
+        current !== null && current !== container;
+        current = current.parentElement
+      ) {
+        level += 1;
+      }
+      deepest = Math.max(deepest, level);
+    }
+    return deepest;
+  });
+}
+
+/** Clicks into the editable line, which takes keyboard focus. */
+async function focusTheEditableLine(page: Page): Promise<void> {
+  const box = await page.getByTestId("document-scroller").boundingBox();
+  await page.getByTestId("document-scroller").click({ position: { x: (box?.width ?? 800) / 2, y: 80 } });
+  await expect(page.getByRole("textbox", { name: "Editable line" })).toBeFocused();
+}
+
+/** Types into the editable line and waits until the engine's text is back in it. */
+async function typeIntoTheEditableLine(page: Page, text: string): Promise<void> {
+  const editable = page.getByRole("textbox", { name: "Editable line" });
+  await page.keyboard.type(text);
+  await expect
+    .poll(() =>
+      editable.evaluate((element) =>
+        element instanceof HTMLTextAreaElement ? element.value : (element.textContent ?? ""),
+      ),
+    )
+    .toBe(text);
+}
 
 test("the mirror gives assistive technology the document's headings, paragraphs, list and table", async ({ page }) => {
   await page.goto("/");
@@ -125,7 +199,7 @@ test("the mirror and the input bridge are left out of the browser's page transla
   expect(translatable).toEqual([]);
 });
 
-test("a tree deeper than the mirror's limit becomes lines of text below the limit, without crashing or freezing", async ({
+test("a tree 64 levels deep, the deepest the engine sends, gets an element of its own for every level", async ({
   page,
 }) => {
   const problems = await collectProblems(page);
@@ -135,87 +209,94 @@ test("a tree deeper than the mirror's limit becomes lines of text below the limi
   const mirror = page.getByTestId("a11y-mirror");
   const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
   expect(id).toBeGreaterThan(0);
-  // An a11y.update that replaces the last paragraph (level 2, below the document) with a chain of 100,000 nested nodes, which the
-  // mirror would overflow the call stack on if it built the tree by recursion all the way down. Only some of the nodes have text.
-  await page.evaluate(
-    ({ nodeId, deepest }) => {
-      interface Node {
-        id: number;
-        role: string;
-        text?: string;
-        children?: Node[];
-      }
-      const texts = new Map<number, string>([
-        [2, "Level 2"],
-        [64, "Level 64"],
-        [65, "Level 65"],
-        [66, "Level 66"],
-        [deepest, "The deepest level"],
-      ]);
-      let node: Node | undefined;
-      for (let level = deepest; level >= 2; level -= 1) {
-        const parent: Node = { id: level === 2 ? nodeId : 1_000_000 + level, role: "paragraph" };
-        const text = texts.get(level);
-        if (text !== undefined) parent.text = text;
-        if (node !== undefined) parent.children = [node];
-        node = parent;
-      }
-      const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
-      const update = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-      scope.__engineWorker.dispatchEvent(
-        new MessageEvent("message", { data: { v: 0, type: "a11y.update", seq: 1_000_000, payload: update } }),
-      );
-    },
-    { nodeId: id, deepest: 100_001 },
-  );
-  // The replaced paragraph, its own text first.
-  const replaced = mirror.locator(`[data-node-id="${id}"]`);
-  await expect(replaced).toBeAttached();
-  expect(await replaced.evaluate((element) => element.firstChild?.textContent)).toBe("Level 2");
-  // Levels 2 to 64 are elements of their own; below that, each node with text is one line in the element of level 64, in order.
-  const deepestElement = mirror.locator('[data-node-id="1000064"]');
-  await expect(deepestElement.locator("> div")).toHaveText(["Level 65", "Level 66", "The deepest level"]);
-  const depth = await mirror.evaluate((container) => {
-    let deepest = 0;
-    for (const element of container.querySelectorAll("*")) {
-      let level = 0;
-      for (
-        let current: Element | null = element;
-        current !== null && current !== container;
-        current = current.parentElement
-      ) {
-        level += 1;
-      }
-      deepest = Math.max(deepest, level);
-    }
-    return deepest;
-  });
-  // 64 levels of nodes, and the lines inside the last one.
-  expect(depth).toBe(65);
+  // The last paragraph (level 2, below the document) becomes a chain down to level 64. The engine flattens whatever lies deeper into the
+  // text of the node at level 64 (spec §14.7 item 1), so the mirror flattens nothing itself.
+  await replaceWithChain(page, id, 64);
+  const deepest = mirror.locator('[data-node-id="1000064"]');
+  await expect(deepest).toHaveText("Level 64");
+  await expect(mirror.locator(`[data-node-id="${id}"]`)).toBeAttached();
+  expect(await mirrorDepth(page)).toBe(64);
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "ready");
   // The app still works: the editable line still takes typing and shows the engine's text.
-  const editable = page.getByRole("textbox", { name: "Editable line" });
-  const box = await page.getByTestId("document-scroller").boundingBox();
-  await page.getByTestId("document-scroller").click({ position: { x: (box?.width ?? 800) / 2, y: 80 } });
-  await expect(editable).toBeFocused();
-  await page.keyboard.type("ok");
-  await expect
-    .poll(() =>
-      editable.evaluate((element) =>
-        element instanceof HTMLTextAreaElement ? element.value : (element.textContent ?? ""),
-      ),
-    )
-    .toBe("ok");
+  await focusTheEditableLine(page);
+  await typeIntoTheEditableLine(page, "ok");
   expect(await problems()).toEqual([]);
+});
+
+test("a tree deeper than 64 levels breaks the protocol: the app stops using the engine and says so", async ({
+  page,
+}) => {
+  await keepWorker(page);
+  await page.goto("/");
+  await waitForDocument(page);
+  const mirror = page.getByTestId("a11y-mirror");
+  const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
+  // A chain of 100,000 levels: refused before anything is built, without exhausting the call stack or freezing.
+  await replaceWithChain(page, id, 100_001);
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "failed");
+  await expect(page.locator(".document-status")).toHaveText(stopped);
+  // The worker is terminated (spec §14.1 item 5), and the document is gone with the session.
+  await expect.poll(() => page.workers().length).toBe(0);
+  await expect(mirror.getByRole("heading")).toHaveCount(0);
+  await expect(mirror.locator('[data-node-id="1000064"]')).toHaveCount(0);
+});
+
+test("a node with more children than one message holds is mirrored in full, its parts loaded without moving focus", async ({
+  page,
+}) => {
+  const problems = await collectProblems(page);
+  // 2,500 paragraphs after the mock document's own, at most 1,000 to a message (a11y-parts.ts).
+  await standInForParts(page, { extra: 2_500, perMessage: 1_000 });
+  await page.goto("/");
+  await waitForDocument(page);
+  const mirror = page.getByTestId("a11y-mirror");
+  // The first message held the mock document's children and the first 1,000 added ones.
+  await expect(mirror.locator(`[data-node-id="${partId(999)}"]`)).toBeAttached();
+  await expect(mirror.locator(`[data-node-id="${partId(1_000)}"]`)).toHaveCount(0);
+  // Keyboard focus in the editable line while the parts arrive: loading them must not move it.
+  await focusTheEditableLine(page);
+  await releaseParts(page);
+  await expect(mirror.locator(`[data-node-id="${partId(2_499)}"]`)).toBeAttached();
+  // Every child once, in order: the mock document's own, then the added ones.
+  const ids = await mirror
+    .locator('[role="document"]')
+    .evaluate((document) => [...document.children].map((child) => Number((child as HTMLElement).dataset["nodeId"])));
+  const own = ids.length - 2_500;
+  expect(own).toBeGreaterThan(10);
+  expect(ids.slice(own)).toEqual(Array.from({ length: 2_500 }, (_, index) => 9_000_000 + index));
+  expect(new Set(ids).size).toBe(ids.length);
+  await expect(mirror.getByText("Added paragraph 2499")).toBeAttached();
+  // Two parts, each asked for as the whole gap that remained (spec §14.7 item 1), each holding 1,000 and then 500.
+  expect(await partQueries(page)).toEqual([
+    { start: own + 1_000, count: 1_500 },
+    { start: own + 2_000, count: 500 },
+  ]);
+  await expect(page.getByRole("textbox", { name: "Editable line" })).toBeFocused();
+  await typeIntoTheEditableLine(page, "ok");
+  expect(await problems()).toEqual([]);
+});
+
+test("a part without the child its range starts with breaks the protocol, and the app stops instead of asking again", async ({
+  page,
+}) => {
+  await standInForParts(page, { extra: 2_500, perMessage: 1_000, withoutStart: true });
+  await page.goto("/");
+  await waitForDocument(page);
+  await releaseParts(page);
+  await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "failed");
+  await expect(page.locator(".document-status")).toHaveText(stopped);
+  await page.waitForTimeout(500);
+  expect(await partQueries(page)).toHaveLength(1);
 });
 
 /**
  * Times the mirror's work on a11y.updates that the test hands the app as the engine would send them, and returns how long the mirror took
  * for each timed update, in milliseconds, one list for each of `sizes`: the mirror applies an update synchronously while its event is
  * dispatched. Every update replaces the last paragraph (level 2) or nodes below it. Each round times one update of each size in turn, so
- * that a machine that is busy for a while slows all sizes alike. `forget`: for each size n, a chain down to level 63 whose node there has n
- * children on level 64, the mirror's deepest level, each with one node below it, is built untimed, and then replacing that chain with a
- * single paragraph is timed, which forgets all of them. `change`: a chain down to a single node on level 64 with 20,000 nodes below it is
- * built once, untimed, and for each size n, one update that changes n of those nodes is timed.
+ * that a machine that is busy for a while slows all sizes alike. `forget`: for each size n, a chain down to level 62 whose node there has n
+ * children on level 63, each with one node below it on level 64, the deepest the engine sends, is built untimed, and then replacing that
+ * chain with a single paragraph is timed, which forgets all of them. `change`: for each size n, a chain down to a node on level 63 with n
+ * nodes below it on level 64 is built untimed, and then one update that changes 400 of those nodes is timed.
  */
 async function timeUpdates(
   page: Page,
@@ -244,36 +325,35 @@ async function timeUpdates(
       const apply = (changes: { kind: string; node: Node }[]): number => {
         seq += 1;
         const payload = { doc_id: scope.__docId, changes, caret: null };
-        const event = new MessageEvent("message", { data: { v: 0, type: "a11y.update", seq, payload } });
+        const event = new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } });
         const start = performance.now();
         scope.__engineWorker.dispatchEvent(event);
         return Math.round((performance.now() - start) * 10) / 10;
       };
       const times = sizes.map((): number[] => []);
-      if (kind === "change") {
-        const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
-        for (let i = 0; i < 20_000; i += 1)
-          owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
-        apply([{ kind: "replace", node: chainDownTo(owner, 64) }]);
-      }
       for (let round = 1; round <= rounds; round += 1) {
         for (const [size, n] of sizes.entries()) {
           if (kind === "forget") {
-            const parent: Node = { id: 3_000_063, role: "paragraph", children: [] };
+            const parent: Node = { id: 3_000_062, role: "paragraph", children: [] };
             for (let i = 0; i < n; i += 1) {
               const below: Node = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i}` };
               parent.children?.push({ id: 4_000_000 + i, role: "paragraph", text: `Owner ${i}`, children: [below] });
             }
-            apply([{ kind: "replace", node: chainDownTo(parent, 63) }]);
+            apply([{ kind: "replace", node: chainDownTo(parent, 62) }]);
             // Without the tree in place, the timed update would have nothing to forget.
-            if (document.querySelector(`[data-node-id="${4_000_000 + n - 1}"]`) === null)
+            if (document.querySelector(`[data-node-id="${5_000_000 + n - 1}"]`) === null)
               throw new Error("The tree to forget is not in place.");
             const paragraphAgain: Node = { id: paragraph, role: "paragraph", text: `Replaced in round ${round}` };
             times[size]?.push(apply([{ kind: "replace", node: paragraphAgain }]));
           } else {
-            const changes = Array.from({ length: n }, (_, i) => ({
+            const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
+            for (let i = 0; i < n; i += 1)
+              owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
+            apply([{ kind: "replace", node: chainDownTo(owner, 63) }]);
+            const step = Math.floor(n / 400);
+            const changes = Array.from({ length: 400 }, (_, i) => ({
               kind: "replace",
-              node: { id: 7_000_000 + i * 37, role: "paragraph", text: `Changed ${i * 37} in round ${round}` },
+              node: { id: 7_000_000 + i * step, role: "paragraph", text: `Changed ${i * step} in round ${round}` },
             }));
             times[size]?.push(apply(changes));
           }
@@ -285,11 +365,10 @@ async function timeUpdates(
   );
 }
 
-test("updates below the mirror's depth limit take time in proportion to their size", async ({ page }) => {
-  // Most of this test's time goes into building, untimed, the tree that each timed round forgets. There can be fewer of them only with
-  // fewer rounds, and five interleaved rounds are what keep each side's fastest round reliable. A slow runner needs most of the default
-  // time limit for them (on macos-26-intel Firefox took 14.4 s of its 30 s, and Chromium with its processor throttled four times 27.1 s),
-  // so this test gets three times its project's limit.
+test("updates take time in proportion to what they change, not to the tree around it", async ({ page }) => {
+  // Most of this test's time goes into building, untimed, the trees that each timed round forgets or changes. Five interleaved rounds are
+  // what keep each side's fastest round reliable, and a slow runner needs most of the default time limit for them, so this test gets three
+  // times its project's limit.
   test.slow();
   const problems = await collectProblems(page);
   await keepWorker(page);
@@ -304,10 +383,8 @@ test("updates below the mirror's depth limit take time in proportion to their si
   // the ratio depend on how busy the machine is.
   const ratio = (larger: number[] = [], smaller: number[] = []) =>
     Math.min(...larger) / Math.max(Math.min(...smaller), 2);
-  // Replacing the ancestor of many nodes on the deepest level forgets them all, and the nodes below them. Each timed update forgets a tree
-  // of the size measured, built untimed just before it. Twenty times as many nodes take about twenty times as long, and the ratio must stay
-  // below 80. When this test was written, forgetting 1,000 nodes took less than the 2 ms floor, which put the ratio at 7 to 11 in all three
-  // browsers; a first version of this code, which forgot each node by searching the nodes below all the others, put it at 280 to 440.
+  // Replacing the ancestor of many nodes forgets them all, and the nodes below them. Twenty times as many nodes take about twenty times as
+  // long, and the ratio must stay below 80; forgetting each node by searching the others would put it in the hundreds.
   const [small = [], large = []] = await timeUpdates(page, id, "forget", [1_000, 20_000], 5);
   await expect(mirror.locator(`[data-node-id="${id}"]`)).toHaveText("Replaced in round 5");
   await expect(mirror.locator('[data-node-id="4000000"]')).toHaveCount(0);
@@ -315,16 +392,15 @@ test("updates below the mirror's depth limit take time in proportion to their si
     ratio(large, small),
     `forgetting 1,000 nodes took ${small.join(" / ")} ms, 20,000 took ${large.join(" / ")} ms`,
   ).toBeLessThan(80);
-  // Many changes below one node on the deepest level: each costs time in proportion to its own size, and the node's flattened text is
-  // rebuilt once per update, so 400 changes take about as long as one; rebuilding it after each change made them take 400 times as long.
-  const [one = [], many = []] = await timeUpdates(page, id, "change", [1, 400], 3);
-  expect(ratio(many, one), `1 change took ${one.join(" / ")} ms, 400 took ${many.join(" / ")} ms`).toBeLessThan(8);
+  // 400 changes of nodes among 20,000 siblings take about as long as 400 among 400: a change finds its node's place among its siblings by
+  // binary search, never by looking at all of them, which would make the first side fifty times slower.
+  const [few = [], many = []] = await timeUpdates(page, id, "change", [400, 20_000], 3);
+  expect(ratio(many, few), `among 400: ${few.join(" / ")} ms, among 20,000: ${many.join(" / ")} ms`).toBeLessThan(8);
   // And the changes are there, each in its place among the lines.
   const owner = mirror.locator('[data-node-id="6000000"]');
-  await expect(owner.locator("> div").nth(0)).toHaveText("Changed 0 in round 3");
-  await expect(owner.locator("> div").nth(37)).toHaveText("Changed 37 in round 3");
-  await expect(owner.locator("> div").nth(38)).toHaveText("Line 38");
-  await expect(owner.locator("> div").nth(399 * 37)).toHaveText(`Changed ${399 * 37} in round 3`);
-  await expect(owner.locator("> div")).toHaveCount(20_000);
+  await expect(owner.locator("> p").nth(0)).toHaveText("Changed 0 in round 3");
+  await expect(owner.locator("> p").nth(50)).toHaveText("Changed 50 in round 3");
+  await expect(owner.locator("> p").nth(51)).toHaveText("Line 51");
+  await expect(owner.locator("> p")).toHaveCount(20_000);
   expect(await problems()).toEqual([]);
 });

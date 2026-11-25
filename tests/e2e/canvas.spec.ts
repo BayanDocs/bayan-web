@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import { colourAt, mockColours, mockPage, pageBox, waitForDocument, waitForTiles } from "./document.ts";
 
 // WEB-002 AC-1, the compositor: the engine's tiles reach the canvas, scrolling and zooming keep it filled, and a change of
-// devicePixelRatio re-renders at the new resolution. Frame-time figures are in measurements.spec.ts.
+// devicePixelRatio re-renders at the new resolution. Frame-time figures are in measurements.spec.ts. WEB-004: tiles are kept by render
+// revision (engine protocol §14.6), and in print mode a view.set invalidates nothing, so the compositor requests what a new scale needs
+// itself and nothing else.
 
 test("draws the mock document's first page from the engine's tiles", async ({ page }) => {
   await page.goto("/");
@@ -168,4 +170,54 @@ test("an edit re-renders only the changed part of a tile, and the patch shows ex
   await scroller.evaluate((element, { left, top }) => element.scrollTo({ left, top, behavior: "instant" }), position);
   await waitForTiles(page);
   expect(await digest()).toBe(patched);
+});
+
+test("a view.set for a new viewport renders nothing again: in print mode the engine invalidates nothing for it (FU-25)", async ({
+  page,
+}) => {
+  // FU-25: the test above failed now and then on CI's macOS 15 runner because whole tiles were requested while typing. Its trace showed
+  // the four requests after typing to be a whole tile, the edit's two patches and another whole tile: the pattern of a view.set that
+  // arrived after the page had filled, sent by the app's resize handler a moment after the document opened, for which protocol v0
+  // invalidated every page, so that the compositor rendered every tile again. Protocol v1 invalidates nothing for a view.set that changes
+  // only the viewport, zoom or device scale (§14.6 item 2): this test sends one by resizing the window, and nothing is rendered again.
+  await page.addInitScript(() => {
+    const sent: string[] = [];
+    const invalidations: unknown[] = [];
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      const envelope = message as { worker?: unknown; type?: unknown } | null;
+      if (envelope?.worker === "init") {
+        this.addEventListener("message", (event: MessageEvent<unknown>) => {
+          const data = event.data as { type?: unknown; payload?: unknown } | null;
+          if (data?.type === "render.invalidate") invalidations.push(data.payload);
+        });
+      }
+      if (typeof envelope?.type === "string") sent.push(envelope.type);
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+    Object.assign(globalThis, { __sent: sent, __invalidations: invalidations });
+  });
+  await page.goto("/");
+  await waitForDocument(page);
+  // Past the app's quiet period for view.set, so that no earlier one is still to come.
+  await page.waitForTimeout(500);
+  await waitForTiles(page);
+  await page.evaluate(() => {
+    const scope = globalThis as unknown as { __sent: string[]; __invalidations: unknown[] };
+    scope.__sent.length = 0;
+    scope.__invalidations.length = 0;
+  });
+  // Ten pixels taller: the same tiles are in view and in the margin around it, so the compositor needs no new one.
+  const size = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.setViewportSize({ width: size.width, height: size.height + 10 });
+  const sent = () => page.evaluate(() => (globalThis as unknown as { __sent: string[] }).__sent.slice());
+  await expect.poll(sent).toContain("view.set");
+  await page.waitForTimeout(500);
+  await waitForTiles(page);
+  expect((await sent()).filter((type) => type === "render.tile")).toEqual([]);
+  expect(await page.evaluate(() => (globalThis as unknown as { __invalidations: unknown[] }).__invalidations)).toEqual(
+    [],
+  );
+  const first = await pageBox(page, 0);
+  expect(await colourAt(page, first.x + first.width / 2, first.y + 40)).toEqual(mockColours.paper);
 });

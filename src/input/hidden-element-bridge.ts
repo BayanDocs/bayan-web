@@ -62,7 +62,8 @@ export class HiddenElementBridge implements InputBridge {
     element.addEventListener("compositionstart", (event) => this.#compositionstart(event), { signal });
     element.addEventListener("compositionend", (event) => this.#compositionend(event), { signal });
     element.addEventListener("paste", (event) => this.#paste(event), { signal });
-    // Nothing can be selected in v0's mock document, so there is nothing to copy; the engine will supply clipboard content (spec §6).
+    // Nothing can be selected in the mock document yet, so there is nothing to copy; the engine supplies clipboard content with
+    // clipboard.copy (spec §14.5), which WEB-005 brings.
     element.addEventListener("copy", (event) => event.preventDefault(), { signal });
     element.addEventListener("cut", (event) => event.preventDefault(), { signal });
     element.addEventListener("drop", (event) => event.preventDefault(), { signal });
@@ -100,10 +101,10 @@ export class HiddenElementBridge implements InputBridge {
 
   #keydown(event: KeyboardEvent): void {
     this.#lastKeyDown = event.timeStamp;
-    const decision = decideKey(event, this.#options.shortcuts(), this.#options.apple);
+    const decision = decideKey(event, this.#options.keys());
     if (decision === null) return;
     event.preventDefault();
-    this.#sink.key(decision.message, event.timeStamp);
+    this.#sink.key(decision, event.timeStamp);
   }
 
   #beforeinput(event: InputEvent): void {
@@ -117,8 +118,8 @@ export class HiddenElementBridge implements InputBridge {
         return;
       case "insertText":
       case "insertReplacementText": {
-        // insertReplacementText (autocorrect, spelling suggestions) should replace a range; v0's protocol can only insert at the caret,
-        // so the replacement is inserted (a protocol gap recorded in the WEB-002 report). Both are switched off on this element.
+        // insertReplacementText (autocorrect, spelling suggestions) should replace a range; until WEB-005 sends input.text with a range
+        // (spec §14.4), the replacement is inserted at the caret (a gap recorded in the WEB-002 report). Both are switched off here.
         const text = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
         event.preventDefault();
         if (text !== "") this.#sink.text(text, time);
@@ -172,8 +173,8 @@ export class HiddenElementBridge implements InputBridge {
 
   #paste(event: ClipboardEvent): void {
     event.preventDefault();
-    // Only plain text, as committed text. Richer formats must reach the engine as raw bytes, never decoded by the browser (ADR-0006);
-    // v0's protocol has no message for them yet (WEB-002 report).
+    // Only plain text, as committed text. Richer formats must reach the engine as raw bytes, never decoded by the browser (ADR-0006),
+    // in input.paste (spec §14.5), which WEB-005 brings.
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text !== "") this.#sink.text(text, event.timeStamp);
   }

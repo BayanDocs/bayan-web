@@ -118,18 +118,40 @@ export function tileKey(page: number, key: string, column: number, row: number):
   return `${page}@${key}:${column},${row}`;
 }
 
-/** The size of a page in device pixels at a scale, rounded up so that the tiles cover the whole page. */
+/**
+ * How far below a whole number of pixels a page's exact size may lie and still be rounded down to it (spec §14.6 item 3): the formula's
+ * rounding errors stay below about 7 × 10⁻¹⁰ pixels for every page size and scale the protocol allows, so a page whose exact size is a
+ * whole number of pixels never gains one, and both shells give every page the same size.
+ */
+export const PIXEL_TOLERANCE = 1e-6;
+
+/**
+ * The size of a page in device pixels at a scale s = zoom × device scale, rounded up so that the tiles cover the whole page: the formula of
+ * spec §14.6 item 3, max(1, ceil(width × s / 19,050 − 10⁻⁶)), computed in this order in double precision as both shells do.
+ */
 export function pagePixels(page: Pick<PageInfo, "width" | "height">, scale: number): { width: number; height: number } {
   return {
-    width: Math.max(1, Math.ceil((page.width * scale) / BLU_PER_DIP - 1e-9)),
-    height: Math.max(1, Math.ceil((page.height * scale) / BLU_PER_DIP - 1e-9)),
+    width: Math.max(1, Math.ceil((page.width * scale) / BLU_PER_DIP - PIXEL_TOLERANCE)),
+    height: Math.max(1, Math.ceil((page.height * scale) / BLU_PER_DIP - PIXEL_TOLERANCE)),
   };
+}
+
+/** How many columns and rows of tiles cover a page at a scale. */
+export function tileGrid(
+  page: Pick<PageInfo, "width" | "height">,
+  scale: number,
+  size = TILE_SIZE,
+): { columns: number; rows: number } {
+  const pixels = pagePixels(page, scale);
+  return { columns: Math.ceil(pixels.width / size), rows: Math.ceil(pixels.height / size) };
 }
 
 /**
  * The tile in `column` and `row` of a page at a scale. Its pixel edges are whole device pixels from the page's corner, and its rectangle
- * in BLU is derived from those edges, so neighbouring tiles share their edges exactly and no seam can appear between them; within a tile
- * the engine maps pixels to BLU exactly (spec §7). The last row and column are cut to the page's size in pixels.
+ * in BLU is derived from those edges by the formula of spec §14.6 item 3, x = round(a × 19,050 / s), halves away from zero (Math.round,
+ * for numbers that are not negative) and at least 1 BLU wide and high, so neighbouring tiles share their edges exactly and no seam can
+ * appear between them; within a tile the engine maps pixels to BLU exactly (spec §7). The last row and column are cut to the page's size
+ * in pixels.
  */
 export function tileSpec(page: PageInfo, scale: number, column: number, row: number, size = TILE_SIZE): TileSpec {
   const pixels = pagePixels(page, scale);
@@ -201,9 +223,7 @@ export function visibleTiles(
   marginPixels = 0,
   size = TILE_SIZE,
 ): TileSpec[] {
-  const pixels = pagePixels(placed.page, scale);
-  const columns = Math.ceil(pixels.width / size);
-  const rows = Math.ceil(pixels.height / size);
+  const { columns, rows } = tileGrid(placed.page, scale, size);
   const first = (origin: number) => Math.max(0, Math.floor((-marginPixels - origin) / size));
   const last = (origin: number, extent: number, count: number) =>
     Math.min(count - 1, Math.floor((extent + marginPixels - origin - 1) / size));
@@ -225,14 +245,13 @@ export function intersects(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
-/** A tile the compositor holds: its geometry, and whether a later invalidation has made its pixels stale. */
-export interface HeldTile {
+/** A tile the compositor holds, as far as drawing it goes: its geometry (tile-book.ts keeps the rest). */
+export interface PlacedTile {
   readonly spec: TileSpec;
-  readonly stale: boolean;
 }
 
 /** One drawing operation: a held tile, drawn at a device-pixel rectangle of the canvas. */
-export interface DrawTile<T extends HeldTile> {
+export interface DrawTile<T extends PlacedTile> {
   readonly tile: T;
   readonly x: number;
   readonly y: number;
@@ -246,7 +265,7 @@ export interface DrawTile<T extends HeldTile> {
  * closest; then the tiles of the current scale, which cover them. A tile whose pixels are stale is still drawn until its replacement
  * arrives, so an edit never makes the page flicker.
  */
-export function drawOrder<T extends HeldTile>(placed: PlacedPage, scale: number, held: readonly T[]): DrawTile<T>[] {
+export function drawOrder<T extends PlacedTile>(placed: PlacedPage, scale: number, held: readonly T[]): DrawTile<T>[] {
   const current = scaleKey(scale);
   const others = held
     .filter((tile) => tile.spec.page === placed.page.index && tile.spec.scaleKey !== current)

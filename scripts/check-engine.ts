@@ -1,13 +1,21 @@
 // Checks that engine-package/ holds the engine's WebAssembly package built from the bayan-core commit pinned in bayan-core.pin, with
-// every file the app serves (config/engine-files.ts). The first step of `pnpm verify` after the dependency checks, so that nothing is
-// type-checked, built or tested against another engine than the pinned one.
+// every file the app serves (config/engine-files.ts), the protocol's TypeScript declarations and the conformance vectors that the unit tests
+// run. The first step of `pnpm verify` after the dependency checks, so that nothing is type-checked, built or tested against another
+// engine than the pinned one.
 //
 // Usage: node scripts/check-engine.ts   (run from the repository root; build the package with scripts/engine-package.sh)
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPackageDir, parsePin, pinFile, protocolDeclarations, readEngineBuild } from "../config/engine-files.ts";
+import {
+  conformanceFileNames,
+  defaultPackageDir,
+  parsePin,
+  pinFile,
+  protocolDeclarations,
+  readEngineBuild,
+} from "../config/engine-files.ts";
 
 /** Returns the problems with the engine package; an empty list means it matches the pin. */
 export function checkEngine(packageDir: string, pinText: string): string[] {
@@ -26,6 +34,11 @@ export function checkEngine(packageDir: string, pinText: string): string[] {
   }
   if (!existsSync(join(packageDir, protocolDeclarations))) {
     problems.push(`${join(packageDir, protocolDeclarations)} is missing; the app's protocol types come from it.`);
+  }
+  for (const name of conformanceFileNames) {
+    if (!existsSync(join(packageDir, name))) {
+      problems.push(`${join(packageDir, name)} is missing; the unit tests run the conformance vectors from it.`);
+    }
   }
   return problems;
 }

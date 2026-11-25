@@ -3,8 +3,9 @@ import type { PageInfo } from "../../src/engine/protocol.ts";
 import {
   contentLayout,
   drawOrder,
-  type HeldTile,
   intersection,
+  PIXEL_TOLERANCE,
+  type PlacedTile,
   pageAreaSize,
   pagePixels,
   patchFor,
@@ -75,6 +76,17 @@ describe("tiles", () => {
     expect(last).toMatchObject({ width: 816 - 512, height: 1056 - 1024, offsetX: 512, offsetY: 1024 });
   });
 
+  it("round a page's size up only when it lies more than 10⁻⁶ of a pixel above a whole number (spec §14.6 item 3)", () => {
+    expect(PIXEL_TOLERANCE).toBe(1e-6);
+    // 1,000 pixels at scale 1 is 19,050,000 BLU; a scale just above 1 makes the exact size a sliver more than 1,000 pixels.
+    const square = { width: 19_050_000, height: 19_050_000 };
+    expect(pagePixels(square, 1 + 5e-10)).toEqual({ width: 1000, height: 1000 });
+    expect(pagePixels(square, 1 + 2e-9)).toEqual({ width: 1001, height: 1001 });
+    expect(pagePixels(square, 1 - 5e-10)).toEqual({ width: 1000, height: 1000 });
+    // At least one pixel, however small the page or the scale.
+    expect(pagePixels({ width: 1, height: 1 }, 0.01)).toEqual({ width: 1, height: 1 });
+  });
+
   it("share their edges exactly in BLU, so no seam can appear between neighbours", () => {
     const page = pages[0] as PageInfo;
     for (const scale of [1, 1.25, 1.5, 2, 0.67, 3 * 1.1]) {
@@ -112,7 +124,7 @@ describe("tiles", () => {
 describe("drawing order", () => {
   const page = pages[0] as PageInfo;
   const placed = { page, x: 10, y: 20 };
-  const held = (scale: number, column: number, stale = false): HeldTile => ({
+  const held = (scale: number, column: number, stale = false): PlacedTile & { stale: boolean } => ({
     spec: tileSpec(page, scale, column, 0),
     stale,
   });

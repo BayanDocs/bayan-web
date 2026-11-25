@@ -1,20 +1,37 @@
 // Connects the engine worker, the tile compositor, the input bridge and the accessibility mirror for one document view (WEB-002).
 //
-// It runs the session (hello, ui.manifest, doc.open, view.set, query.a11y; spec §5, §11), recovers from engine failures as spec §12.1
-// says (a limited number of new sessions, each announced, without reopening the document unasked), turns the engine's events into drawing,
-// mirror updates and bridge updates, turns scrolling, zooming, devicePixelRatio changes, pointer presses and the bridge's input into
-// messages, and measures the latencies of WEB-002 (src/metrics.ts). The scroll-and-draw path is imperative and allocation-light; React
-// only renders the frame around it and the status line (DocumentView.tsx).
+// It runs the session (hello, ui.manifest, doc.open, view.set, query.a11y; spec §5, §11, protocol v1 of §14), recovers from engine
+// failures as spec §12.1 and §14.2 say (a new session for each restart that the engine's bindings grant, each announced with the number
+// the engine gives, without reopening the document unasked, and the stop when the engine has used them up), stops for good after a refused
+// hello or a message that breaks the protocol (§14.1), with the update prompt after unsupported_protocol_version, turns the engine's events
+// into drawing, mirror updates and bridge updates, turns scrolling, zooming, devicePixelRatio changes, pointer presses and the bridge's
+// input into messages, and measures the latencies of WEB-002 (src/metrics.ts). The scroll-and-draw path is imperative and
+// allocation-light; React only renders the frame around it and the status line (DocumentView.tsx).
 
 import { AccessibilityMirror } from "../a11y/mirror.ts";
-import { EngineClient as Client, type EngineClient, EngineRequestError, type EngineState } from "../engine/client.ts";
-import type { A11yNode, InputKey, PageInfo, PageRect, RequestType } from "../engine/protocol.ts";
+import {
+  EngineClient as Client,
+  type EngineClient,
+  EngineSessionEndedError,
+  type EngineState,
+  type StopReason,
+} from "../engine/client.ts";
+import { browserPlatform } from "../engine/platform.ts";
+import type {
+  A11yNode,
+  A11yTree,
+  ChildRange,
+  InputKey,
+  PageInfo,
+  PageRect,
+  RequestType,
+  Restart,
+} from "../engine/protocol.ts";
 import { BLU_PER_DIP, PROTOCOL_VERSION } from "../engine/protocol.ts";
-import { maxRestarts, RestartAllowance } from "../engine/recovery.ts";
 import { startEngineWorker } from "../engine/start.ts";
 import type { InputBridge, InputSink } from "../input/bridge.ts";
 import { createInputBridge } from "../input/create-bridge.ts";
-import { isApplePlatform, manifestShortcuts, type Shortcut } from "../input/keys.ts";
+import { type KeyData, keyDataOf, noKeys } from "../input/keys.ts";
 import { measureNames, recordDuration, roundTripName } from "../metrics.ts";
 import { Compositor, type FrameReport } from "./compositor.ts";
 import {
@@ -42,13 +59,30 @@ export interface DocumentStatus {
    * came before it was ever open; null when there is nothing to offer. The offer stays through further failures and goes at the stop.
    */
   readonly offer: "reopen" | "open" | null;
+  /**
+   * The update prompt (spec §14.1 item 3): the engine refused hello with unsupported_protocol_version, because the browser holds files of
+   * two deployments of the app; reloading the page finishes the update. Shown with a button that reloads the page.
+   */
+  readonly reload: boolean;
   readonly zoom: number;
   readonly bridge: InputBridge["kind"];
 }
 
-/** Whether a request failed because the engine panicked while handling it: the engine.error that follows starts the recovery. */
-function isPanic(error: unknown): boolean {
-  return error instanceof EngineRequestError && error.info.code === "panic";
+/** What the status line says when the engine stops, by why it stopped (spec §12.1 step 2, §14.1, §14.2); never the engine's own words. */
+function stopMessage(reason: StopReason): string {
+  switch (reason) {
+    case "load_failed":
+      return "The engine could not be started. Reload the page to try again.";
+    case "restarts_used_up":
+      return "The engine stopped working again, so it was not restarted. Reload the page to start it again.";
+    case "unsupported_protocol_version":
+      return "The app was updated while this page was open. Reload the page to finish the update.";
+    case "worker_failed":
+    case "protocol_violation":
+    case "hello_refused":
+    case "terminated":
+      return "The engine stopped. Reload the page to start it again.";
+  }
 }
 
 export interface DocumentElements {
@@ -93,7 +127,8 @@ export class DocumentController {
   #layout: ContentLayout = { originX: 0, originY: 0, width: 0, height: 0 };
   #zoom = 1;
   #devicePixelRatio = 1;
-  #shortcuts: Shortcut[] = [];
+  /** The keys the engine handles and those the shell keeps, from the session's UI manifest (spec §14.3). */
+  #keys: KeyData = noKeys;
   #status: DocumentStatus;
   #probes: Probe[] = [];
   /** A mouse pointerdown waits for its mousedown, which carries the click count. */
@@ -106,11 +141,9 @@ export class DocumentController {
   #watchingResize = false;
   #devicePixelObserver: ResizeObserver | undefined;
   #destroyed = false;
-  /** How many new sessions engine failures may still start (spec §12.1). */
-  readonly #restarts = new RestartAllowance();
   /** Counts the sessions, so that what an older session's requests return is dropped (spec §12.1, point 4). */
   #session = 0;
-  /** The engine failed too often, or its worker stopped: no session is started any more. */
+  /** The client stopped using the engine (it failed, used up its restarts or broke the protocol): no session is started any more. */
   #stopped = false;
   /** A document is being opened (doc.open to query.a11y): a failure now closes it as much as one that is open. */
   #opening = false;
@@ -125,18 +158,20 @@ export class DocumentController {
       overlay: elements.overlay,
       requestTile: (spec, patch) => this.#requestTile(spec, patch),
       onFrame: (report) => this.#frame(report),
+      onViolation: () => this.#client?.violation(),
       blink: !reducedMotion,
     });
-    this.#bridge = createInputBridge(this.#sink(), {
-      shortcuts: () => this.#shortcuts,
-      apple: isApplePlatform(navigator.platform),
+    this.#bridge = createInputBridge(this.#sink(), { keys: () => this.#keys });
+    this.#mirror = new AccessibilityMirror(elements.mirror, this.#bridge, {
+      load: (node, children) => this.#loadChildren(node, children),
+      onViolation: () => this.#client?.violation(),
     });
-    this.#mirror = new AccessibilityMirror(elements.mirror, this.#bridge);
     this.#mirror.clear();
     this.#status = {
       engine: "starting",
       message: "Starting the engine…",
       offer: null,
+      reload: false,
       zoom: 1,
       bridge: this.#bridge.kind,
     };
@@ -170,12 +205,13 @@ export class DocumentController {
     client.onRoundTrip = (type: RequestType, milliseconds: number) =>
       recordDuration(roundTripName(type), performance.now() - milliseconds, performance.now());
     client.onState((state) => this.#engineState(state, started));
+    client.onRestart((restart) => this.#restarted(client, restart));
     client.on("view.pages", (payload) => {
       if (payload.doc_id === this.#docId) this.#setPages(payload.pages);
     });
     client.on("render.invalidate", (payload) => {
       if (payload.doc_id !== this.#docId) return;
-      this.#compositor.invalidate(payload.regions);
+      this.#compositor.invalidate(payload.regions, payload.revision);
       const probe = this.#probes.findLast((candidate) => candidate.replied);
       probe?.invalidated.push(...payload.regions);
     });
@@ -189,7 +225,8 @@ export class DocumentController {
     client.on("a11y.update", (payload) => {
       if (payload.doc_id === this.#docId) this.#mirror.update(payload);
     });
-    client.on("engine.error", (payload) => this.#engineError(client, payload));
+    // An engine.error with recoverable true ends nothing: the engine kept its state (spec §12). Its code and words are the engine's, which
+    // the shell never shows; the client turns those with recoverable false into restarts or the stop (§14.2).
     if (await this.#startSession(client)) await this.#openDocument(client);
   }
 
@@ -279,41 +316,30 @@ export class DocumentController {
       recordDuration(measureNames.engineStart, started, performance.now());
       this.#setStatus({ engine: "ready", message: `Engine ${state.engineVersion} ready.` });
     } else if (state.kind === "failed" && !this.#destroyed && !this.#stopped) {
-      // The worker host could not replace the engine after a panic, or the worker stopped: nothing can restart it (spec §12.1).
+      // The client stopped using the engine for good, and terminated its worker: only reloading the page brings it back (spec §12.1
+      // step 1, §14.1, §14.2). After unsupported_protocol_version the update prompt replaces the stop message (§14.1 item 3).
       this.#stopped = true;
       this.#forgetSession();
       this.#setStatus({
         engine: "failed",
         offer: null,
-        message: "The engine stopped. Reload the page to start it again.",
+        reload: state.reason === "unsupported_protocol_version",
+        message: stopMessage(state.reason),
       });
     }
   }
 
   /**
-   * An engine.error (spec §12). Only `recoverable` decides, and anything but `true` means the engine discarded the session: then a new
-   * session starts, without the document, as long as the restart allowance lasts, and the user is told each time (spec §12.1). Nothing
-   * else of the error is used or shown: its code, message identifier and arguments come from the engine.
+   * The engine discarded its session and is ready for restart `number` of `limit`, which its bindings counted (spec §14.2): a new session
+   * starts, without the document, and the user is told which restart this is (§12.1). Nothing of the error is shown: its code, message
+   * identifier and arguments come from the engine.
    */
-  #engineError(client: EngineClient, payload: unknown): void {
-    const recoverable =
-      typeof payload === "object" && payload !== null && "recoverable" in payload && payload.recoverable === true;
-    if (recoverable || this.#destroyed || this.#stopped) return;
+  #restarted(client: EngineClient, restart: Restart): void {
+    if (this.#destroyed || this.#stopped) return;
     // What the failure closed decides what the message says and what is offered (spec §12.1, points 2 and 3).
     const closed = this.#docId !== null || this.#opening;
     const offer = closed || this.#status.offer === "reopen" ? "reopen" : "open";
     this.#forgetSession();
-    const restart = this.#restarts.take();
-    if (restart === null) {
-      this.#stopped = true;
-      client.terminate();
-      this.#setStatus({
-        engine: "failed",
-        offer: null,
-        message: "The engine stopped working again, so it was not restarted. Reload the page to start it again.",
-      });
-      return;
-    }
     const documentState = closed
       ? "The document was closed and can be reopened."
       : offer === "reopen"
@@ -321,7 +347,7 @@ export class DocumentController {
         : "The document can be opened now.";
     this.#setStatus({
       offer,
-      message: `The engine stopped working and was restarted (${restart} of ${maxRestarts}). ${documentState}`,
+      message: `The engine stopped working and was restarted (${restart.number} of ${restart.limit}). ${documentState}`,
     });
     void this.#startSession(client);
   }
@@ -336,6 +362,7 @@ export class DocumentController {
     this.#session += 1;
     this.#docId = null;
     this.#opening = false;
+    this.#keys = noKeys;
     this.#probes = [];
     this.#compositor.reset();
     this.#setPages([]);
@@ -343,22 +370,29 @@ export class DocumentController {
     if (keepFocus) scroller.focus({ preventScroll: true });
   }
 
-  /** hello and ui.manifest: a new session (spec §5). Resolves with whether it started and is still the current one. */
+  /**
+   * hello and ui.manifest: a new session (spec §5, §14.1). Resolves with whether it started and is still the current one. hello offers
+   * protocol version 1 and names the system the browser runs on, which the engine uses only to resolve the manifest's key bindings
+   * (§14.3). A refused hello stops the client for good (src/engine/client.ts), and a refused ui.manifest leaves the session without keys.
+   */
   async #startSession(client: EngineClient): Promise<boolean> {
     const session = this.#session;
     try {
       await client.request("hello", {
         protocol_versions: [PROTOCOL_VERSION],
-        shell: { name: "bayan-web", version: "0.0.0", platform: "web" },
+        shell: { name: "bayan-web", version: "0.0.0", platform: browserPlatform(navigator), runtime: "browser" },
         capabilities: { ime: true, accessibility: true, clipboard_formats: ["text/plain"] },
         locale: navigator.language,
       });
       const manifest = await client.request("ui.manifest", { locale: navigator.language });
       if (session !== this.#session) return false;
-      this.#shortcuts = manifestShortcuts(manifest.commands);
+      this.#keys = keyDataOf(manifest);
       return true;
     } catch (error) {
-      if (session === this.#session && !this.#destroyed && !isPanic(error)) {
+      // The session ended (EngineSessionEndedError: the engine.error that ended it says what follows), the client stopped (its state says
+      // why), or the engine refused ui.manifest: then the document cannot be edited from the keyboard, and the user is told.
+      if (error instanceof EngineSessionEndedError) return false;
+      if (session === this.#session && !this.#destroyed && client.state.kind !== "failed") {
         this.#setStatus({ message: "The document could not be opened." });
       }
       return false;
@@ -369,30 +403,55 @@ export class DocumentController {
   async #openDocument(client: EngineClient): Promise<boolean> {
     const session = this.#session;
     this.#opening = true;
-    let panicked = false;
+    let ended = false;
     try {
-      // v0 opens its mock document whatever the bytes are (spec §6.1).
+      // Until real documents can be opened, the engine opens its mock document whatever the bytes are (spec §6.1).
       const file = new ArrayBuffer(0);
       const opened = await client.request("doc.open", { blob: file }, [file]);
       if (session !== this.#session) return false;
       this.#docId = opened.doc_id;
+      this.#compositor.setRevision(opened.revision);
+      // In print mode the first view.set invalidates nothing (spec §14.6 item 2): the compositor requests the tiles it shows by itself.
       await this.#sendViewSet();
       if (session !== this.#session) return false;
       const tree = await client.request("query.a11y", { doc_id: opened.doc_id });
       if (session !== this.#session) return false;
+      if (tree.doc_id !== opened.doc_id) {
+        client.violation();
+        return false;
+      }
       this.#mirror.setTree(tree);
+      // A tree that breaks the protocol has stopped the engine meanwhile, and ended the session.
+      if (session !== this.#session) return false;
       this.#placeBridge();
       return true;
     } catch (error) {
-      panicked = isPanic(error);
-      if (session === this.#session && !this.#destroyed && !panicked) {
+      // A request of a session that ended (EngineSessionEndedError) changes nothing: the engine.error that ended it says what follows.
+      ended = error instanceof EngineSessionEndedError;
+      if (session === this.#session && !this.#destroyed && !ended && client.state.kind !== "failed") {
         this.#setStatus({ message: "The document could not be opened." });
       }
       return false;
     } finally {
       // The engine.error of a panic comes just after its reply (spec §12.1, point 4): until then, the document is still being opened.
-      if (session === this.#session && !panicked) this.#opening = false;
+      if (session === this.#session && !ended) this.#opening = false;
     }
+  }
+
+  /**
+   * Loads a part of a node's children for the mirror (query.a11y with a children range, spec §14.7 item 1). An answer for another document
+   * breaks the protocol.
+   */
+  async #loadChildren(node: number, children: ChildRange): Promise<A11yTree> {
+    const client = this.#client;
+    const docId = this.#docId;
+    if (client === undefined || docId === null) throw new Error("no document");
+    const tree = await client.request("query.a11y", { doc_id: docId, node, children });
+    if (tree.doc_id !== docId) {
+      client.violation();
+      throw new Error("an answer for another document");
+    }
+    return tree;
   }
 
   #listen(): void {
@@ -508,8 +567,8 @@ export class DocumentController {
   }
 
   /**
-   * v0's engine answers every view.set by invalidating every page (spec §6.2), so the view is sent only when what the tiles depend on
-   * changes (zoom, devicePixelRatio, size), never while scrolling, and at most once per quiet period.
+   * The view is sent when the zoom, devicePixelRatio or size changes, at most once per quiet period, not while scrolling. In print mode the
+   * engine invalidates nothing for it (spec §14.6 item 2): the compositor requests the tiles of a new scale itself.
    */
   #scheduleViewSet(): void {
     clearTimeout(this.#viewSetTimer);
@@ -532,7 +591,7 @@ export class DocumentController {
     }
   }
 
-  #requestTile(spec: TileSpec, patch?: TilePatch): Promise<{ bitmap: ImageBitmap; hash: string }> {
+  #requestTile(spec: TileSpec, patch?: TilePatch): Promise<{ bitmap: ImageBitmap; hash: string; revision: number }> {
     const client = this.#client;
     if (client === undefined || this.#docId === null) return Promise.reject(new Error("no document"));
     return client.request("render.tile", {
