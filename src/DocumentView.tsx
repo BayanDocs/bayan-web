@@ -63,6 +63,12 @@ export function DocumentView() {
             {status.offer === "reopen" ? "Reopen the document" : "Open the document"}
           </Button>
         ) : null}
+        {/* The update prompt (spec §14.1 item 3): the browser holds files of two deployments of the app, which a reload replaces. */}
+        {status?.reload ? (
+          <Button className="tool-button" onPress={() => window.location.reload()}>
+            Reload the page
+          </Button>
+        ) : null}
       </div>
       <div className="document-stage">
         {/* The pixels are for eyes only; assistive technology reads the accessibility mirror inside the scroller. */}

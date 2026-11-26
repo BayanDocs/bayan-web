@@ -66,7 +66,8 @@ export class EditContextBridge implements InputBridge {
     );
     element.addEventListener("keydown", (event) => this.#keydown(event), { signal });
     element.addEventListener("paste", (event) => this.#paste(event), { signal });
-    // Nothing can be selected in v0's mock document, so there is nothing to copy; the engine will supply clipboard content (spec §6).
+    // Nothing can be selected in the mock document yet, so there is nothing to copy; the engine supplies clipboard content with
+    // clipboard.copy (spec §14.5), which WEB-005 brings.
     element.addEventListener("copy", (event) => event.preventDefault(), { signal });
     element.addEventListener("cut", (event) => event.preventDefault(), { signal });
     element.addEventListener("drop", (event) => event.preventDefault(), { signal });
@@ -108,10 +109,10 @@ export class EditContextBridge implements InputBridge {
 
   #keydown(event: KeyboardEvent): void {
     this.#lastKeyDown = event.timeStamp;
-    const decision = decideKey(event, this.#options.shortcuts(), this.#options.apple);
+    const decision = decideKey(event, this.#options.keys());
     if (decision === null) return;
     event.preventDefault();
-    this.#sink.key(decision.message, event.timeStamp);
+    this.#sink.key(decision, event.timeStamp);
   }
 
   #textupdate(event: TextUpdateEvent): void {
@@ -124,8 +125,8 @@ export class EditContextBridge implements InputBridge {
       this.#sink.composition("update", event.text, selection, time);
       return;
     }
-    // Committed text. v0's protocol inserts at the caret only, so a replaced range (updateRangeStart < updateRangeEnd), which input
-    // methods produce for reconversion, is not replaced (a protocol gap recorded in the WEB-002 report).
+    // Committed text, inserted at the caret: until WEB-005 sends input.text with a range (spec §14.4), a replaced range
+    // (updateRangeStart < updateRangeEnd), which input methods produce for reconversion, is not replaced (a gap in the WEB-002 report).
     if (event.text !== "") this.#sink.text(event.text, time);
   }
 
@@ -150,7 +151,8 @@ export class EditContextBridge implements InputBridge {
 
   #paste(event: ClipboardEvent): void {
     event.preventDefault();
-    // Only plain text, as committed text; richer formats must reach the engine as raw bytes (ADR-0006), which v0 cannot carry yet.
+    // Only plain text, as committed text; richer formats must reach the engine as raw bytes (ADR-0006), in input.paste (spec §14.5),
+    // which WEB-005 brings.
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text !== "") this.#sink.text(text, event.timeStamp);
   }

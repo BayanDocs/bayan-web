@@ -5,31 +5,32 @@
 // tile requests in the worker), and keeps drawing old tiles, scaled, until new ones arrive. When the engine invalidates part of a tile it
 // has, it asks for just that part (a patch) and draws it over the tile, instead of rendering the whole tile again: typing changes a strip
 // a few dozen pixels tall, and re-rendering two 512-pixel tiles for each key press was the largest cost in WEB-002's latency figures.
+//
+// Which tiles are current is decided by render revision (engine protocol §14.6 item 1), in the tile book (tile-book.ts): a tile is kept
+// while no invalidation with a higher revision covers it, in whatever order tiles and invalidations arrive. The compositor requests the
+// tiles of a new scale itself: in print mode a new zoom or device-pixel ratio invalidates nothing (§14.6 item 2).
 
 import { BLU_PER_DIP, type OverlayUpdate, type PageInfo, type PageRect, type Rect } from "../engine/protocol.ts";
+import { type HeldTile, TileBook, type TileRequest } from "./tile-book.ts";
 import {
   type DrawTile,
   drawOrder,
-  type HeldTile,
-  intersection,
-  intersects,
   type PlacedPage,
-  patchFor,
   scaleKey,
   type TilePatch,
   type TileSpec,
   toCanvas,
-  union,
   type ViewTransform,
   viewScale,
   visiblePages,
   visibleTiles,
 } from "./tiles.ts";
 
-/** What a tile request resolves with: the reply to render.tile on the web (spec §3.2). */
+/** What a tile request resolves with: the reply to render.tile on the web (spec §3.2), with the render revision it shows (§14.6). */
 export interface TileImage {
   readonly bitmap: ImageBitmap;
   readonly hash: string;
+  readonly revision: number;
 }
 
 /** What one frame drew, for measurements. */
@@ -48,43 +49,19 @@ export interface CompositorOptions {
   /** Renders a tile, or only a patch of it when `patch` is given. */
   readonly requestTile: (spec: TileSpec, patch?: TilePatch) => Promise<TileImage>;
   readonly onFrame?: (report: FrameReport) => void;
+  /** A tile older than a revision the compositor had seen when it requested it: the engine broke the protocol (§14.1 item 5, §14.6). */
+  readonly onViolation?: () => void;
   /** Whether the caret may blink; false when the user prefers reduced motion. */
   readonly blink?: boolean;
 }
 
-/** A re-rendered part of a held tile, drawn over it. */
-interface Patch {
-  readonly bitmap: ImageBitmap;
-  readonly place: TilePatch;
-}
-
-interface Held extends HeldTile {
-  readonly bitmap: ImageBitmap;
-  /** Re-rendered parts, drawn over the tile in order. */
-  readonly patches: Patch[];
-  /** The part of the tile (page BLU) invalidated since its pixels were last requested; null when there is none. */
-  dirty: Rect | null;
-  /** Whether the pixels are not yet those of the latest invalidation: something is dirty, or a request for it is under way. */
-  stale: boolean;
-  bytes: number;
-  lastUsed: number;
-}
-
-/** A tile request waiting in the worker: the tile, the tile's invalidation count when it was sent, and the patch if it is one. */
-interface Flying {
-  readonly spec: TileSpec;
-  readonly version: number;
-  readonly patch?: TilePatch;
-}
+type Held = HeldTile<ImageBitmap>;
 
 /**
  * At most this many tile requests wait in the worker at once. The worker handles messages in order, so a key press waits behind every
  * tile request already queued; one keeps that wait to a single tile's rendering (WEB-002's measurements).
  */
 const MAX_IN_FLIGHT = 1;
-/** A tile is rendered whole again instead of patched when the patch would cover more than this share of it, or after this many patches. */
-const PATCH_SHARE = 0.5;
-const MAX_PATCHES = 16;
 /** Tiles just outside the view are requested too, this many device pixels around it, so that slow scrolling finds them ready. */
 const PREFETCH_PIXELS = 256;
 /** The memory the held tiles may take, in bytes of RGBA pixels. */
@@ -119,13 +96,12 @@ export class Compositor {
   #pages: readonly PageInfo[] = [];
   #transform: ViewTransform | undefined;
   #overlayState: OverlayUpdate | null = null;
+  /** The render revision of the overlay drawn: an older one that arrives later is not drawn over it (§14.6 item 1). */
+  #overlayRevision = 0;
   #focused = false;
   #caretOn = true;
   #blinkTimer: ReturnType<typeof setInterval> | undefined;
-  readonly #held = new Map<string, Held>();
-  /** The invalidation count of each tile: a reply rendered before the latest invalidation of its tile is stale on arrival. */
-  readonly #versions = new Map<string, number>();
-  readonly #inFlight = new Map<string, Flying>();
+  readonly #book = new TileBook<ImageBitmap>((bitmap) => bitmap.close());
   /** Increases whenever the document or session changes, so that replies to older requests are dropped. */
   #generation = 0;
   #frame = 0;
@@ -147,11 +123,11 @@ export class Compositor {
   }
 
   /**
-   * The document's pages (view.pages). The tiles of a page whose size is unchanged are kept: v0's engine sends view.pages after every
-   * view.set, and dropping them would leave the page empty until fresh tiles arrive, just when stale-tile scaling should stand in.
+   * The document's pages (view.pages). The tiles of a page whose size is unchanged are kept, so that a view.pages that changes nothing
+   * (or only other pages) never leaves a page empty until fresh tiles arrive.
    */
   setPages(pages: readonly PageInfo[]): void {
-    for (const [key, held] of this.#held) {
+    for (const [key, held] of [...this.#book.held]) {
       const before = this.#pages[held.spec.page];
       const after = pages[held.spec.page];
       if (
@@ -160,21 +136,25 @@ export class Compositor {
         before.width !== after.width ||
         before.height !== after.height
       ) {
-        this.#release(key, held);
+        this.#book.releaseTile(key);
       }
     }
     this.#pages = pages;
     this.#scheduleFrame(true, true);
   }
 
+  /** The document's render revision when it opened (doc.opened, §14.6 item 1). */
+  setRevision(revision: number): void {
+    this.#book.saw(revision);
+  }
+
   /** Forgets every tile and request, for a new session or document. */
   reset(): void {
     this.#generation += 1;
-    for (const [key, held] of this.#held) this.#release(key, held);
-    this.#versions.clear();
-    this.#inFlight.clear();
+    this.#book.reset();
     this.#pages = [];
     this.#overlayState = null;
+    this.#overlayRevision = 0;
     this.#scheduleFrame(true, true);
   }
 
@@ -198,23 +178,12 @@ export class Compositor {
   }
 
   /**
-   * render.invalidate: the parts of the held tiles inside these regions are requested again (as patches, or whole), and the tiles are
-   * drawn as they are until the new pixels arrive, so an edit never makes the page flicker.
+   * render.invalidate: the document is at `revision` now, and these regions changed since the previous revision. The parts of the held tiles
+   * inside them whose pixels are older are requested again (as patches, or whole), and the tiles are drawn as they are until the new
+   * pixels arrive, so an edit never makes the page flicker (tile-book.ts).
    */
-  invalidate(regions: readonly PageRect[]): void {
-    for (const region of regions) {
-      for (const held of this.#held.values()) {
-        const part = region.page === held.spec.page ? intersection(region.rect, held.spec.rect) : null;
-        if (part === null) continue;
-        held.dirty = union(held.dirty, part);
-        held.stale = true;
-      }
-      for (const { spec } of this.#inFlight.values()) {
-        if (region.page === spec.page && intersects(region.rect, spec.rect) && !this.#held.has(spec.key)) {
-          this.#versions.set(spec.key, (this.#versions.get(spec.key) ?? 0) + 1);
-        }
-      }
-    }
+  invalidate(regions: readonly PageRect[], revision: number): void {
+    for (const region of regions) this.#book.invalidate(region.page, region.rect, revision);
     this.#scheduleFrame(false, false);
   }
 
@@ -224,6 +193,8 @@ export class Compositor {
    * the keystroke-to-caret latency (WEB-002 measured it; requirement PERF-04).
    */
   setOverlay(overlay: OverlayUpdate): void {
+    if (overlay.revision < this.#overlayRevision) return;
+    this.#overlayRevision = overlay.revision;
     this.#overlayState = overlay;
     this.#caretOn = true;
     this.#restartBlink();
@@ -318,7 +289,7 @@ export class Compositor {
     const canvas = this.#options.tiles;
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.imageSmoothingEnabled = true;
-    const held = [...this.#held.values()];
+    const held = [...this.#book.held.values()];
     let placeholders = 0;
     for (const page of placed) {
       const order = drawOrder(page, scale, held);
@@ -332,12 +303,12 @@ export class Compositor {
       for (const draw of order as DrawTile<Held>[]) {
         const tile = draw.tile;
         tile.lastUsed = this.#frame;
-        context.drawImage(tile.bitmap, draw.x, draw.y, draw.width, draw.height);
+        context.drawImage(tile.image, draw.x, draw.y, draw.width, draw.height);
         const scaleX = draw.width / tile.spec.width;
         const scaleY = draw.height / tile.spec.height;
-        for (const { bitmap, place } of tile.patches) {
+        for (const { image, place } of tile.patches) {
           context.drawImage(
-            bitmap,
+            image,
             draw.x + place.x * scaleX,
             draw.y + place.y * scaleY,
             place.width * scaleX,
@@ -401,20 +372,21 @@ export class Compositor {
     const wanted = placed.flatMap((page) => visibleTiles(page, scale, canvas.width, canvas.height, PREFETCH_PIXELS));
     let missing = 0;
     for (const spec of wanted) {
-      const held = this.#held.get(spec.key);
+      const held = this.#book.held.get(spec.key);
       if (held !== undefined) held.lastUsed = this.#frame;
-      if (held !== undefined && !held.stale) continue;
+      if (!this.#book.isStale(spec.key)) continue;
       missing += 1;
-      if (this.#inFlight.has(spec.key) || this.#inFlight.size >= MAX_IN_FLIGHT) continue;
-      this.#request(spec, held);
+      if (this.#book.inFlight.size >= MAX_IN_FLIGHT) continue;
+      const request = this.#book.next(spec);
+      if (request !== null) this.#send(request);
     }
     // Once the current scale covers the visible part of a page, the stand-in tiles of other scales are no longer needed.
     const current = scaleKey(scale);
     let released = false;
     if (missing === 0) {
-      for (const [key, held] of this.#held) {
+      for (const [key, held] of [...this.#book.held]) {
         if (held.spec.scaleKey !== current && placed.some((page) => page.page.index === held.spec.page)) {
-          this.#release(key, held);
+          this.#book.releaseTile(key);
           released = true;
         }
       }
@@ -424,112 +396,61 @@ export class Compositor {
     const inView = visiblePages(this.#pages, transform, canvas.width, canvas.height).flatMap((page) =>
       visibleTiles(page, scale, canvas.width, canvas.height),
     );
-    const visibleMissing = inView.filter((spec) => this.#held.get(spec.key)?.stale !== false).length;
+    const visibleMissing = inView.filter((spec) => this.#book.isStale(spec.key)).length;
     this.#evict(new Set(wanted.map((spec) => spec.key)));
-    const bytes = [...this.#held.values()].reduce((sum, held) => sum + held.bytes, 0);
+    const bytes = [...this.#book.held.values()].reduce((sum, held) => sum + held.bytes, 0);
     const data = this.#options.tiles.dataset;
-    data["tilesHeld"] = String(this.#held.size);
+    data["tilesHeld"] = String(this.#book.held.size);
     data["tileBytes"] = String(bytes);
-    data["tilesInFlight"] = String(this.#inFlight.size);
+    data["tilesInFlight"] = String(this.#book.inFlight.size);
     data["tilesMissing"] = String(missing);
     data["tilesVisibleMissing"] = String(visibleMissing);
     // Draw without them: a stand-in scaled to a fractional size can reach a pixel past the fresh tiles at a page's edge.
     return released;
   }
 
-  /**
-   * Requests what a wanted tile needs: the whole tile if it is not held (or its dirty part is large, or it has many patches already),
-   * otherwise a patch of its dirty part.
-   */
-  #request(spec: TileSpec, held: Held | undefined): void {
-    const version = this.#versions.get(spec.key) ?? 0;
-    if (held === undefined || held.dirty === null) {
-      this.#send({ spec, version });
-      return;
-    }
-    const patch = patchFor(spec, held.dirty);
-    held.dirty = null;
-    if (patch === null) {
-      held.stale = false;
-      return;
-    }
-    const large = patch.width * patch.height > PATCH_SHARE * spec.width * spec.height;
-    this.#send(large || held.patches.length >= MAX_PATCHES ? { spec, version } : { spec, version, patch });
-  }
-
-  #send(flying: Flying): void {
-    const { spec, patch } = flying;
+  /** Sends a request of the tile book, and hands it the reply; a reply of an earlier generation is dropped. */
+  #send(request: TileRequest<ImageBitmap>): void {
+    const { spec, patch } = request;
     const generation = this.#generation;
-    this.#inFlight.set(spec.key, flying);
+    this.#book.sent(request);
     this.#options.requestTile(spec, patch).then(
       (image) => {
         if (generation !== this.#generation || this.#destroyed) {
           image.bitmap.close();
           return;
         }
-        this.#inFlight.delete(spec.key);
         const bitmap = ownedCopy(image.bitmap);
-        if (patch === undefined) {
-          this.#receiveTile(flying, bitmap);
-        } else {
-          this.#receivePatch(spec, patch, bitmap);
+        const pixels = patch === undefined ? spec.width * spec.height : patch.width * patch.height;
+        const outcome = this.#book.received(request, bitmap, image.revision, pixels * 4);
+        if (outcome === "violation") {
+          this.#options.onViolation?.();
+          return;
+        }
+        if (outcome === "kept") {
+          this.#arrived.push({ page: spec.page, rect: patch?.rect ?? spec.rect });
+          const held = this.#book.held.get(spec.key);
+          if (held !== undefined) held.lastUsed = this.#frame;
         }
         this.#scheduleFrame(true, false);
       },
       () => {
         // The engine refused or stopped; the controller learns why from the client. A later frame asks again if still current.
-        if (generation === this.#generation) this.#inFlight.delete(spec.key);
+        if (generation === this.#generation) this.#book.failed(request);
       },
     );
   }
 
-  #receiveTile({ spec, version }: Flying, bitmap: ImageBitmap): void {
-    const previous = this.#held.get(spec.key);
-    // Invalidations that came while the tile was being rendered: those of a held tile are in its dirty part; those of a tile not yet
-    // held only raised its count, and then the whole tile is dirty.
-    const dirty = previous?.dirty ?? (version < (this.#versions.get(spec.key) ?? 0) ? spec.rect : null);
-    if (previous !== undefined) this.#release(spec.key, previous);
-    this.#held.set(spec.key, {
-      spec,
-      bitmap,
-      patches: [],
-      dirty,
-      stale: dirty !== null,
-      bytes: spec.width * spec.height * 4,
-      lastUsed: this.#frame,
-    });
-    this.#arrived.push({ page: spec.page, rect: spec.rect });
-  }
-
-  #receivePatch(spec: TileSpec, place: TilePatch, bitmap: ImageBitmap): void {
-    const held = this.#held.get(spec.key);
-    if (held === undefined) {
-      bitmap.close();
-      return;
-    }
-    held.patches.push({ bitmap, place });
-    held.bytes += place.width * place.height * 4;
-    held.stale = held.dirty !== null;
-    this.#arrived.push({ page: spec.page, rect: place.rect });
-  }
-
-  /** Lets go of a held tile and its patches. */
-  #release(key: string, held: Held): void {
-    held.bitmap.close();
-    for (const patch of held.patches) patch.bitmap.close();
-    this.#held.delete(key);
-  }
-
   /** Lets go of the least recently drawn tiles that are not wanted now, until the held tiles fit the memory budget. */
   #evict(wanted: ReadonlySet<string>): void {
-    let bytes = [...this.#held.values()].reduce((sum, held) => sum + held.bytes, 0);
+    let bytes = [...this.#book.held.values()].reduce((sum, held) => sum + held.bytes, 0);
     if (bytes <= MEMORY_BUDGET) return;
-    const candidates = [...this.#held.values()]
+    const candidates = [...this.#book.held.values()]
       .filter((held) => !wanted.has(held.spec.key))
       .sort((a, b) => a.lastUsed - b.lastUsed);
     for (const held of candidates) {
       if (bytes <= MEMORY_BUDGET) break;
-      this.#release(held.spec.key, held);
+      this.#book.releaseTile(held.spec.key);
       bytes -= held.bytes;
     }
   }

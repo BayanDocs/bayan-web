@@ -1,9 +1,42 @@
+import { createHash } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 import { collectProblems } from "./collect-problems.ts";
 import { waitForDocument } from "./document.ts";
 
 // WEB-002 AC-5: the engine's worker starts through the one Trusted Types policy, bayan-script-url, which refuses every other address;
-// and the integrity plan: a changed engine file stops the engine before its worker starts.
+// and the integrity plan: a changed engine file stops the engine before its worker starts. WEB-004 AC-7 (engine protocol §14.8): the worker
+// host fetches the engine module with the hash that the app gives it, wasm_integrity, so that the browser refuses a module whose bytes do
+// not match before any of it runs.
+
+/** Records the init message that the app sends the worker host; with `integrity`, replaces its wasm_integrity on the way. */
+async function watchInit(page: Page, integrity?: string): Promise<void> {
+  await page.addInitScript((replacement) => {
+    const post = Worker.prototype.postMessage;
+    // The first message that each worker receives, as the app sent it.
+    const started = new WeakSet<Worker>();
+    const firstMessages: unknown[] = [];
+    Object.assign(globalThis, { __firstMessages: firstMessages });
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      if (!started.has(this)) {
+        started.add(this);
+        firstMessages.push(message);
+      }
+      const envelope = message as { worker?: unknown } | null;
+      if (envelope?.worker === "init") {
+        Object.assign(globalThis, { __init: message });
+        if (replacement !== null)
+          return Reflect.apply(post, this, [{ ...envelope, wasm_integrity: replacement }, transfer]);
+      }
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+  }, integrity ?? null);
+}
+
+async function initMessage(page: Page): Promise<{ wasm_url: string; wasm_integrity: string }> {
+  return page.evaluate(
+    () => (globalThis as unknown as { __init: { wasm_url: string; wasm_integrity: string } }).__init,
+  );
+}
 
 /** Records every policy the page creates and every worker it starts, before the app's scripts run. */
 async function watchPoliciesAndWorkers(page: Page): Promise<void> {
@@ -121,5 +154,46 @@ for (const file of ["bayan-worker.js", "bayan_wasm.js", "bayan_wasm_bg.wasm"]) {
     await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "failed");
     await expect(page.locator(".document-status")).toContainText("integrity check");
     expect(await page.evaluate(() => (globalThis as unknown as { __workers: string[] }).__workers)).toEqual([]);
+  });
+}
+
+test("the worker's first message is init, with the engine module's SHA-384, which matches the module served (spec §14.8)", async ({
+  page,
+}) => {
+  await watchInit(page);
+  await page.goto("/");
+  await waitForDocument(page);
+  const init = await initMessage(page);
+  // It is the first message the worker receives, and the only worker is the engine's: given any other message first, the worker host
+  // would start without a hash and fetch the module unchecked.
+  expect(await page.evaluate(() => (globalThis as unknown as { __firstMessages: unknown[] }).__firstMessages)).toEqual([
+    { worker: "init", wasm_url: init.wasm_url, wasm_integrity: init.wasm_integrity },
+  ]);
+  expect(init.wasm_url).toMatch(/^\/assets\/engine-[0-9a-f]{16}\/bayan_wasm_bg\.wasm$/);
+  const module = await page.request.get(init.wasm_url);
+  expect(module.ok()).toBe(true);
+  expect(init.wasm_integrity).toBe(
+    `sha384-${createHash("sha384")
+      .update(await module.body())
+      .digest("base64")}`,
+  );
+});
+
+for (const [what, integrity] of [
+  ["a hash that the module does not match", `sha384-${createHash("sha384").update("another module").digest("base64")}`],
+  ["metadata that names no hash the browser checks", "md5-q2Rv6NEtk7qX9kiv7GbH3A=="],
+] as const) {
+  test(`with ${what}, the engine module never runs: the engine does not start, and the user is told`, async ({
+    page,
+  }) => {
+    await watchInit(page, integrity);
+    await page.goto("/");
+    await expect(page.locator(".document-view")).toHaveAttribute("data-engine-state", "failed", { timeout: 30_000 });
+    // The worker host reported load_failed instead of ready; the app terminated its worker and says so in its live region.
+    await expect(page.locator(".document-status")).toHaveText(
+      "The engine could not be started. Reload the page to try again.",
+    );
+    await expect.poll(() => page.workers().length).toBe(0);
+    await expect(page.getByTestId("a11y-mirror").getByRole("heading")).toHaveCount(0);
   });
 }

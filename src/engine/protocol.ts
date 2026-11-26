@@ -10,10 +10,30 @@ export type * from "../../engine-package/engine-protocol.d.ts";
 export const BLU_PER_DIP = 19_050;
 
 /**
- * The protocol version this shell speaks (spec §5), typed with the package's generated ProtocolVersion: an engine package for another
- * protocol version fails the type check here, instead of the app speaking a version its code was not written for.
+ * The protocol version this shell speaks (spec §5, §14.1), typed with the package's generated ProtocolVersion: an engine package for
+ * another protocol version fails the type check here, instead of the app speaking a version its code was not written for. Every message
+ * the shell sends carries it, and every message from the engine must carry it, except the reply to `hello` (spec §14.1 item 1).
  */
-export const PROTOCOL_VERSION: ProtocolVersion = 0;
+export const PROTOCOL_VERSION: ProtocolVersion = 1;
 
 /** The largest tile side the engine renders, in pixels (spec §13). */
 export const MAX_TILE_SIDE = 4096;
+
+/** The largest identifier, revision and count the protocol uses: 2⁵³ − 1, which a JavaScript number holds exactly (spec §4). */
+export const MAX_ID = Number.MAX_SAFE_INTEGER;
+
+/** The coordinates and sizes of rectangles and pages, in BLU: within ±2⁴⁰ (spec §13), as the desktop shell reads them too. */
+export const MAX_COORDINATE = 2 ** 40;
+
+/** The most pages a view may have, the shell's own bound, as the desktop shell's: every frame looks at every page. */
+export const MAX_PAGES = 1_000_000;
+
+/** An accessibility tree's limits (spec §13, §14.7 item 1): 64 levels, the document node being level 1, and 200,000 nodes per message. */
+export const MAX_TREE_DEPTH = 64;
+export const MAX_TREE_NODES = 200_000;
+
+/** The largest index and count of a node's children, and the largest text offset: the protocol's unsigned 32-bit integers. */
+export const MAX_INDEX = 2 ** 32 - 1;
+
+/** The longest engine version, in ASCII characters (spec §14.1 item 6). */
+export const MAX_ENGINE_VERSION_LENGTH = 64;

@@ -1,6 +1,8 @@
 // What the app learns about the engine's files at build time (config/engine-files.ts writes it; src/engine/engine-files.d.ts types it).
 // A separate module without Node.js imports, so that both the browser code and the build configuration can use the type.
 
+import type { WorkerInit } from "./protocol.ts";
+
 /** A file of the engine that the app serves: its absolute same-origin URL path and its Subresource Integrity hash. */
 export interface EngineFileEntry {
   readonly url: string;
@@ -20,4 +22,12 @@ export interface EngineManifest {
   readonly wasm: EngineFileEntry;
   /** The licence notices of the Rust code compiled into the engine. */
   readonly notices: { readonly url: string };
+}
+
+/**
+ * The worker host's init message (spec §3.2): where the engine module is, and its SHA-384 from the build's manifest as wasm_integrity, with
+ * which the worker host fetches the module, so that the browser refuses bytes that do not match before any of them runs (§14.8).
+ */
+export function initMessage(wasm: EngineFileEntry): WorkerInit {
+  return { worker: "init", wasm_url: wasm.url, wasm_integrity: wasm.integrity };
 }

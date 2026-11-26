@@ -51,7 +51,7 @@ export async function enablePanics(page: Page, failing: Failing | null = null): 
       if (next || (fail !== null && envelope?.type === fail.type && (fail.times === null || failed < fail.times))) {
         if (!next) failed += 1;
         // The same id, so that the engine's error panic answers the app's own request; the transfer list still moves any blob.
-        return Reflect.apply(post, this, [{ v: 0, id: envelope.id, type: "diag.panic" }, transfer]);
+        return Reflect.apply(post, this, [{ v: 1, id: envelope.id, type: "diag.panic" }, transfer]);
       }
       return Reflect.apply(post, this, [message, transfer]);
     } as typeof Worker.prototype.postMessage;
@@ -62,7 +62,7 @@ export async function enablePanics(page: Page, failing: Failing | null = null): 
     Object.assign(globalThis, {
       __traffic: traffic,
       // Without an id, so the app's requests and their identifiers are untouched; the engine answers with engine.error only.
-      __panic: () => engineWorker?.postMessage({ v: 0, type: "diag.panic" }),
+      __panic: () => engineWorker?.postMessage({ v: 1, type: "diag.panic" }),
       __failNext: (type: string) => {
         failNext = type;
       },
@@ -116,4 +116,29 @@ export async function breakEngineRestarts(page: Page): Promise<void> {
 /** The types of the messages sent since `before` messages had been sent. */
 export async function sentSince(page: Page, before: number): Promise<string[]> {
   return (await traffic(page)).sent.slice(before);
+}
+
+/**
+ * Replaces the payload of the app's hello on its way to the worker, before the app starts, and records the type of every message the app
+ * sends (protocol.spec.ts reads them with sentTypes): as an app that offers only protocol version 0 would send it, which the v1 engine
+ * refuses with unsupported_protocol_version, or malformed, which it refuses with invalid_request (spec §14.1 item 3).
+ */
+export async function rewriteHello(page: Page, payload: Record<string, unknown>): Promise<void> {
+  await page.addInitScript((replacement) => {
+    const sent: string[] = [];
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
+      const envelope = message as { type?: unknown } | null;
+      if (typeof envelope?.type === "string") sent.push(envelope.type);
+      if (envelope?.type === "hello")
+        return Reflect.apply(post, this, [{ ...envelope, payload: replacement }, transfer]);
+      return Reflect.apply(post, this, [message, transfer]);
+    } as typeof Worker.prototype.postMessage;
+    Object.assign(globalThis, { __sentTypes: sent });
+  }, payload);
+}
+
+/** The types of the messages the app sent, as rewriteHello recorded them. */
+export async function sentTypes(page: Page): Promise<string[]> {
+  return page.evaluate(() => (globalThis as unknown as { __sentTypes: string[] }).__sentTypes.slice());
 }

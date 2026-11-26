@@ -1,8 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { partId, releaseParts, standInForParts } from "./a11y-parts.ts";
 import { collectProblems } from "./collect-problems.ts";
 import { keepWorker, waitForDocument } from "./document.ts";
-import { breakEngineRestarts, enablePanics, panic, traffic } from "./engine-failures.ts";
+import { breakEngineRestarts, enablePanics, panic, rewriteHello, traffic } from "./engine-failures.ts";
 
 // Automated accessibility rules (WEB-003; ADR-0020 decision 6, ADR-0014 decision 3): axe-core's rules for the success criteria of WCAG 2.0,
 // 2.1 and 2.2 at levels A and AA (A11Y-01 asks for WCAG 2.2 AA) run on every state the app has, in Chromium, Firefox and WebKit and in the
@@ -19,18 +20,21 @@ import { breakEngineRestarts, enablePanics, panic, traffic } from "./engine-fail
 // is excluded.
 //
 // The states: the app as it loads, while the engine starts; the document open, with its mirror built; typing in it; zoomed out and in as
-// far as it goes, where one zoom button is disabled; the mirror below its depth limit, where the engine's deeper levels become lines of
-// text; the engine restarted after a failure, with the offer to reopen the document, and the document reopened; stopped at the fourth
-// failure; the offer to open the document after a failure before it was ever open, and the document opened; stopped because the engine's
-// worker failed; the engine's files refused by their integrity check; and, in Chromium, typing through the hidden text area, the input
-// bridge of Firefox and WebKit.
+// far as it goes, where one zoom button is disabled; the mirror at its depth limit of 64 levels (engine protocol §14.7 item 1); a document
+// node whose children the mirror loaded in parts; the engine restarted after a failure, with the offer to reopen the document, and the
+// document reopened; stopped at the fourth failure; the offer to open the document after a failure before it was ever open, and the
+// document opened; stopped because the engine's worker failed; the update prompt with its button to reload the page, after the engine
+// refused the app's protocol version (§14.1 item 3); the engine's files refused by their integrity check; and, in Chromium, typing through
+// the hidden text area, the input bridge of Firefox and WebKit.
 //
 // The other states that the end-to-end tests reach are not checked on their own. These look the same to axe as one of the states above:
 // blocked site storage; a device-pixel ratio of 2; a scrolled document, and the zoom levels between the limits, where only the zoom level's
 // text differs; the dark theme that the system chooses rather than the user, with the same colours; editing other than typing (deleting,
 // moving the caret, pasting, a double click, shortcuts) and an input method's composition, which the engine draws while the bridge stays
-// the same text box; larger updates below the mirror's depth limit, with more lines of text; a restart whose message says that the document
-// is still closed; and the engine's other two files refused by their integrity check. Focus on a control changes only where the focus is
+// the same text box; larger trees and updates, with more elements of the same kinds; a restart whose message says that the document is
+// still closed; the stop after a message that broke the protocol, or after any other refusal of hello, which shows the same message as the
+// stop after the worker failed (WEB-004); the engine's module refused by its hash in the worker (wasm_integrity, engine.spec.ts), whose
+// message differs from the integrity check's only in its words; and the engine's other two files refused by their integrity check. Focus on a control changes only where the focus is
 // and its focus ring, which axe's rules do not judge. "Reopening the document…" and "Opening the document…" last only until the engine has
 // opened the document, too briefly for axe to run, and show nothing that the states before and after them do not. The pages of
 // security.spec.ts whose script the browser refuses are not the app: it never runs there, and #root stays empty. The licence notices that
@@ -185,9 +189,7 @@ for (const theme of ["light", "dark"] as const) {
       expect(await problems()).toEqual([]);
     });
 
-    test("the accessibility mirror below its depth limit, where the engine's deeper levels become lines of text", async ({
-      page,
-    }) => {
+    test("the accessibility mirror at its depth limit, 64 levels deep", async ({ page }) => {
       const problems = await collectProblems(page);
       await keepWorker(page);
       await page.goto("/");
@@ -195,46 +197,58 @@ for (const theme of ["light", "dark"] as const) {
       const mirror = page.getByTestId("a11y-mirror");
       const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
       expect(id).toBeGreaterThan(0);
-      // As a11y.spec.ts does, an a11y.update that replaces the last paragraph (level 2, below the document) with a chain of nested nodes, here
-      // down to level 70: the mirror keeps levels 2 to 64 as elements of their own, and below them each node with text becomes one line of
-      // text in the element of level 64.
+      // As a11y.spec.ts does, an a11y.update that replaces the last paragraph (level 2, below the document) with a chain of nested nodes down
+      // to level 64, the deepest the engine sends: the mirror builds an element for every level.
       await page.evaluate(
         ({ nodeId, deepest }) => {
           interface Node {
             id: number;
             role: string;
-            text?: string;
+            text: string;
             children?: Node[];
           }
-          const texts = new Map<number, string>([
-            [2, "Level 2"],
-            [64, "Level 64"],
-            [65, "Level 65"],
-            [66, "Level 66"],
-            [deepest, "The deepest level"],
-          ]);
           let node: Node | undefined;
           for (let level = deepest; level >= 2; level -= 1) {
-            const parent: Node = { id: level === 2 ? nodeId : 1_000_000 + level, role: "paragraph" };
-            const text = texts.get(level);
-            if (text !== undefined) parent.text = text;
+            const parent: Node = {
+              id: level === 2 ? nodeId : 1_000_000 + level,
+              role: "paragraph",
+              text: `Level ${level}`,
+            };
             if (node !== undefined) parent.children = [node];
             node = parent;
           }
           const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
           const update = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
           scope.__engineWorker.dispatchEvent(
-            new MessageEvent("message", { data: { v: 0, type: "a11y.update", seq: 1_000_000, payload: update } }),
+            new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 1_000_000, payload: update } }),
           );
         },
-        { nodeId: id, deepest: 70 },
+        { nodeId: id, deepest: 64 },
       );
-      await expect(mirror.locator('[data-node-id="1000064"] > div')).toHaveText([
-        "Level 65",
-        "Level 66",
-        "The deepest level",
-      ]);
-      await expectNoViolations(page, "the accessibility mirror below its depth limit", { mirror: true });
+      await expect(mirror.locator('[data-node-id="1000064"]')).toHaveText("Level 64");
+      await expectNoViolations(page, "the accessibility mirror at its depth limit", { mirror: true });
+      expect(await problems()).toEqual([]);
+    });
+
+    test("a document node whose children the mirror loaded in parts", async ({ page }) => {
+      const problems = await collectProblems(page);
+      // As a11y.spec.ts does: 2,500 paragraphs after the mock document's own, at most 1,000 to a message (a11y-parts.ts).
+      await standInForParts(page, { extra: 2_500, perMessage: 1_000 });
+      await page.goto("/");
+      await waitForDocument(page);
+      await releaseParts(page);
+      await expect(page.getByTestId("a11y-mirror").locator(`[data-node-id="${partId(2_499)}"]`)).toBeAttached();
+      await expectNoViolations(page, "a document node whose children were loaded in parts", { mirror: true });
+      expect(await problems()).toEqual([]);
+    });
+
+    test("the update prompt, after the engine refused the app's protocol version", async ({ page }) => {
+      const problems = await collectProblems(page);
+      // As protocol.spec.ts does: the app's hello offers only version 0, which the v1 engine refuses with unsupported_protocol_version.
+      await rewriteHello(page, { protocol_versions: [0] });
+      await page.goto("/");
+      await expect(page.getByRole("button", { name: "Reload the page" })).toBeVisible({ timeout: 30_000 });
+      await expectNoViolations(page, "the update prompt with its button to reload the page");
       expect(await problems()).toEqual([]);
     });
 

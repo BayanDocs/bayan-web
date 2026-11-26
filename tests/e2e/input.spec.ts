@@ -147,15 +147,60 @@ test("typing, deleting and moving the caret reach the engine, and the bridge fol
   expect(await problems()).toEqual([]);
 });
 
+/**
+ * Whether the app names macOS in hello, as src/engine/platform.ts decides from what the browser tells: the engine then binds the manifest's
+ * "Ctrl" shortcuts to Command (spec §14.3). Playwright's browsers run on the CI's Linux and Mac machines only.
+ */
+async function onMac(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const hint = (navigator as unknown as { userAgentData?: { platform?: string } }).userAgentData?.platform;
+    return hint === undefined ? navigator.platform.startsWith("Mac") : hint === "macOS";
+  });
+}
+
+/** Records, for every keydown, its key and whether the app stopped the browser's own handling of it, as the browser sees it afterwards. */
+async function recordKeydowns(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const keydowns: { key: string; prevented: boolean }[] = [];
+    // On window, in the bubbling phase: after the input bridge's own listener on its element has decided.
+    window.addEventListener("keydown", (event) => keydowns.push({ key: event.key, prevented: event.defaultPrevented }));
+    Object.assign(globalThis, { __keydowns: keydowns });
+  });
+}
+
+test("Mod with =, - and 0 stays with the browser's page zoom, while Mod+B is the engine's: default-prevented and sent", async ({
+  page,
+}) => {
+  await recordInput(page);
+  await recordKeydowns(page);
+  await openAndFocus(page);
+  // Mod is Command on macOS, as the engine resolved the manifest for the platform the app named (spec §14.3).
+  const mod = (await onMac(page)) ? "Meta" : "Control";
+  for (const key of ["Equal", "Minus", "Digit0", "b"]) await page.keyboard.press(`${mod}+${key}`);
+  await expect
+    .poll(() => page.evaluate(() => (globalThis as unknown as { __keydowns: unknown[] }).__keydowns))
+    .toEqual([
+      // The browser's keydown of the modifier itself comes first for each press, and is neither.
+      ...["=", "-", "0", "b"].flatMap((key) => [
+        { key: mod, prevented: false },
+        { key, prevented: key === "b" },
+      ]),
+    ]);
+  // Only Mod+B reached the engine, as input.key; the zoom keys sent nothing.
+  expect(await sentInput(page)).toEqual([
+    { type: "input.key", key: "b", ...(mod === "Meta" ? { meta: true } : { ctrl: true }) },
+  ]);
+});
+
 test("the UI manifest's shortcuts go to the engine; clipboard shortcuts and Tab stay with the browser", async ({
   page,
   browserName,
 }) => {
   await recordInput(page);
   await openAndFocus(page);
-  // The manifest's "Ctrl" is the platform's primary modifier, Command on Apple systems (src/input/keys.ts); the engine receives the
-  // modifiers as pressed.
-  const apple = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform));
+  // The engine resolved the manifest's "Ctrl" for the platform the app named in hello: Command on macOS (spec §14.3); the engine receives
+  // the modifiers as pressed.
+  const apple = await onMac(page);
   const primary = apple ? "Meta" : "Control";
   await page.keyboard.press(`${primary}+b`);
   await page.keyboard.press(`${primary}+c`);

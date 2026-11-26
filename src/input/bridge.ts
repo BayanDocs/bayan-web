@@ -5,7 +5,7 @@
 // the caret (the caret-sync prototype of the accessibility mirror, src/a11y/mirror.ts).
 
 import type { CompositionPhase, InputKey, TextRange } from "../engine/protocol.ts";
-import type { Shortcut } from "./keys.ts";
+import type { KeyData } from "./keys.ts";
 
 /** Where a bridge sends what it receives. Times are performance.now() times of the key press or input event that caused the message. */
 export interface InputSink {
@@ -36,10 +36,8 @@ export interface ScreenGeometry {
 }
 
 export interface BridgeOptions {
-  /** The UI manifest's shortcuts, which the bridge sends to the engine instead of letting the browser act on them. */
-  readonly shortcuts: () => readonly Shortcut[];
-  /** Whether Command (not Ctrl) is the primary shortcut modifier. */
-  readonly apple: boolean;
+  /** The engine's key data from the UI manifest (spec §14.3), which decides which presses the bridge sends to the engine (src/input/keys.ts). */
+  readonly keys: () => KeyData;
 }
 
 export interface InputBridge {

@@ -7,12 +7,15 @@
 // SHA-384 hash that the build wrote into the app's own bundle (virtual:bayan-engine), which index.html loads with an integrity hash, so
 // the trust runs index.html → bundle → engine files. fetch() rejects a file whose bytes differ, and the worker is then never started.
 // The files live in a content-addressed folder that is cached immutably, so the worker's own requests are normally answered from the
-// cache entries these checks just filled; that the browser does not bind the two is the remaining gap (docs/spikes/WEB-002-report.md).
+// cache entries these checks just filled. For the module, the largest of the three, the browser binds the two (engine protocol §14.8): the
+// init message gives the worker host the module's hash from the same manifest, wasm_integrity, and the worker host fetches the module with
+// it, so the browser refuses any bytes that do not match before anything of them runs, and the worker host reports load_failed. For the
+// worker's two scripts the gap remains, until the PWA's service worker (WEB-103) or a browser feature checks them
+// (docs/spikes/WEB-002-report.md).
 
 import { engineFiles } from "virtual:bayan-engine";
 import { workerScriptUrl } from "../security/script-url-policy.ts";
-import type { EngineFileEntry } from "./engine-manifest.ts";
-import type { WorkerInit } from "./protocol.ts";
+import { type EngineFileEntry, initMessage } from "./engine-manifest.ts";
 
 /** The engine's files did not pass their integrity check, or could not be fetched; the worker was not started. */
 export class EngineIntegrityError extends Error {
@@ -51,7 +54,6 @@ export async function startEngineWorker(): Promise<Worker> {
     type: "module",
     name: "bayan-engine",
   });
-  const init: WorkerInit = { worker: "init", wasm_url: engineFiles.wasm.url };
-  worker.postMessage(init);
+  worker.postMessage(initMessage(engineFiles.wasm));
   return worker;
 }

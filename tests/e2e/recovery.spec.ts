@@ -2,10 +2,13 @@ import { expect, type Page, test } from "@playwright/test";
 import { collectProblems } from "./collect-problems.ts";
 import { breakEngineRestarts, enablePanics, failNext, panic, sentSince, traffic } from "./engine-failures.ts";
 
-// The recovery policy of engine protocol §12.1, against the real engine: after an unrecoverable engine.error the app starts a new session at
-// most three times in ten minutes (src/engine/recovery.ts; tests/unit/recovery.test.ts checks the ten minutes), says so each time in its
-// status live region, which screen readers announce, never reopens the document unless the user asks, keeps keyboard focus in the
-// document area, also when the offer to reopen goes while its button has focus, and at the fourth failure stops.
+// The recovery policy of engine protocol §12.1 and §14.2, against the real engine: after an unrecoverable engine.error the app starts a new
+// session whenever the engine's restart allowance grants one, at most three times in ten minutes, which the worker host counts (the shell
+// counts nothing itself; the conformance vectors of restart.json check the ten minutes in bayan-core, and the shell's side in
+// tests/unit/conformance.test.ts), says so each time in its status live region, which screen readers announce, with the restart's number
+// from the engine, never reopens the document unless the user asks, keeps keyboard focus in the document area, also when the offer to
+// reopen goes while its button has focus, and at the fourth failure, whose engine.error carries restart null, stops and terminates the
+// worker.
 //
 // The engine fails on purpose through the helpers of engine-failures.ts, whose header says how.
 
@@ -146,6 +149,8 @@ test("the app restarts the engine three times after failures, says so each time,
   const before = await panic(page);
   await expect(status).toHaveText(stopped);
   await expect(state).toHaveAttribute("data-engine-state", "failed");
+  // The engine used up its restarts (restart null): the app terminated its worker (spec §14.2).
+  await expect.poll(() => page.workers().length).toBe(0);
   await expect(heading).toHaveCount(0);
   await expect(reopen).toHaveCount(0);
   await expect(pages).toBeFocused();
