@@ -320,6 +320,10 @@ test("a part that the engine refuses is not asked for again, also after updates,
 test("a part of 199,999 children, as many as one message holds, is mirrored in full, and loading then stops", async ({
   page,
 }) => {
+  // Mirroring the part's 199,999 elements takes the browser most of this test's time: on CI's macOS 26 Intel runner the test waited
+  // 19.5 to 24.2 s of its 30 s for the last of them (bayan-web#25), and Playwright's trace snapshot of the 200,000 elements after the
+  // next action took 2 to 3 s more, so this test gets three times its project's time limit.
+  test.slow();
   const problems = await collectProblems(page);
   await keepWorker(page);
   // The reply for the whole document holds the mock document's own children only, and the one part all 199,999 added paragraphs: with
