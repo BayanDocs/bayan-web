@@ -1,5 +1,11 @@
 // The HTTP security headers every bayan-web server sends (ADR-0014 §9, requirement SEC-10).
 // The Vite dev and preview servers use these objects directly; deploy/nginx/security-headers.conf repeats them for production, and a unit test keeps the two in sync.
+// bayan-server, which serves the web app by default (ADR-0015 decision 2), sends the production set from a copy of its own,
+// crates/bayan-server/src/http/headers.rs, and its tests/http.rs compares what the server sends with a copy of this set taken by hand from
+// a named bayan-web commit. Nothing compares either copy with this file, so a change here alone passes the checks of both repositories while
+// the server keeps sending the old set (the architecture review of 2026-11-20, M13): every change to these headers needs a paired
+// bayan-server pull request that changes headers.rs, the test's copy and the bayan-web commit it names together, until WEB-103 with SRV-105
+// makes the web app's build the single source of the headers.
 
 /** Content Security Policy directives, in the order they are written to the header. */
 export const cspDirectives: ReadonlyArray<readonly [string, ...string[]]> = [
@@ -23,7 +29,8 @@ export const cspDirectives: ReadonlyArray<readonly [string, ...string[]]> = [
   // Exactly one policy may exist: bayan-script-url, which turns the address of the engine's worker script into the TrustedScriptURL
   // that new Worker() requires, and refuses every other address (src/security/script-url-policy.ts; WEB-002 AC-5 in BayanDocs/docs:
   // workpackages/phase-0/WEB-002-spike-worker-canvas.md). Without 'allow-duplicates' a second policy of that name cannot be created,
-  // so nothing else can obtain one. WEB-001 had 'none' here; any further policy needs an approved work package.
+  // so nothing else can obtain one. WEB-001 had 'none' here; any further policy needs an amendment of ADR-0014 (BayanDocs/docs:
+  // adr/0014-web-shell.md, amendment of 2026-10-12, design detail 1), not only an approved work package.
   ["require-trusted-types-for", "'script'"],
   ["trusted-types", "bayan-script-url"],
 ];
