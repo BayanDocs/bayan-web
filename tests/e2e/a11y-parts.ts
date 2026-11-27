@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { A11yNode, EngineReplyError, EngineReplyOk, EngineRequest } from "../../src/engine/protocol.ts";
 
 // A document node with more children than one message holds (engine protocol §14.7 item 1), for the tests of the accessibility mirror
 // (a11y.spec.ts) and of axe's rules in that state (axe.spec.ts). The mock document is small, so the test stands in for the engine where its
@@ -11,6 +12,8 @@ import type { Page } from "@playwright/test";
 //
 // The answers wait until the test calls releaseParts(), so that it can first put keyboard focus in the document. With `withoutStart`, an
 // answer leaves out the child its range starts with, which breaks the protocol (§14.7 item 1); with `refuse`, every answer is an error.
+// The answers, and the app's requests the stand-in reads, are typed with the protocol's types from the pinned engine package
+// (src/engine/protocol.ts), so that the type check holds them to the protocol.
 
 export interface PartsOptions {
   readonly extra: number;
@@ -29,28 +32,19 @@ export const partId = (index: number) => 9_000_000 + index;
 
 export async function standInForParts(page: Page, options: PartsOptions): Promise<void> {
   await page.addInitScript(({ extra, perMessage, firstMessage, withoutStart, withoutText, refuse }) => {
-    interface Node {
-      id: number;
-      role: string;
-      name?: string;
-      text?: string;
-      children?: Node[];
-      child_count?: number;
-      children_start?: number;
-    }
     const scope = globalThis as unknown as Record<string, unknown>;
     let engineWorker: Worker | undefined;
     let wholeDocument: number | undefined;
     /** The document node's children, the mock document's and the added ones, once the engine's tree has arrived. */
-    let all: Node[] = [];
-    let root: Node | undefined;
+    let all: A11yNode[] = [];
+    let root: A11yNode | undefined;
     let docId = 0;
     let released = false;
     const waiting: (() => void)[] = [];
     const queries: { start: number; count: number }[] = [];
-    const deliver = (data: unknown) =>
+    const deliver = (data: EngineReplyOk<"query.a11y"> | EngineReplyError) =>
       setTimeout(() =>
-        engineWorker?.dispatchEvent(new MessageEvent("message", { data: { __standIn: true, ...(data as object) } })),
+        engineWorker?.dispatchEvent(new MessageEvent("message", { data: { __standIn: true, ...data } })),
       );
     const answer = (id: number, start: number, count: number) => {
       if (refuse === true) {
@@ -64,36 +58,28 @@ export async function standInForParts(page: Page, options: PartsOptions): Promis
       }
       const from = withoutStart ? start + 1 : start;
       const children = all.slice(from, Math.min(start + count, from + perMessage));
-      const part = { ...(root as Node), child_count: all.length, children_start: from, children };
+      const part: A11yNode = { ...(root as A11yNode), child_count: all.length, children_start: from, children };
       deliver({ v: 1, re: id, ok: true, payload: { doc_id: docId, root: part, caret: null } });
     };
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function (this: Worker, message: unknown, transfer?: Transferable[]) {
-      const envelope = message as {
-        worker?: unknown;
-        id?: number;
-        type?: unknown;
-        payload?: { node?: number; children?: { start: number; count: number } };
-      } | null;
+      const envelope = message as { worker?: unknown; type?: unknown } | null;
+      const query = envelope?.type === "query.a11y" ? (message as EngineRequest<"query.a11y">) : undefined;
       if (envelope?.worker === "init") {
         engineWorker = this;
         this.addEventListener("message", (event: MessageEvent<unknown>) => {
-          const data = event.data as {
-            __standIn?: boolean;
-            re?: number;
-            ok?: boolean;
-            payload?: { doc_id: number; root: Node };
-          };
+          const data = event.data as { __standIn?: boolean; re?: number; ok?: boolean } | null;
           if (data?.__standIn === true || data?.re === undefined || data.re !== wholeDocument || data.ok !== true)
             return;
           // The engine's tree of the whole document: the app gets it with the added paragraphs, only the first part of them held.
           event.stopImmediatePropagation();
-          const payload = data.payload as { doc_id: number; root: Node };
+          const reply = event.data as EngineReplyOk<"query.a11y">;
+          const payload = reply.payload;
           docId = payload.doc_id;
           const own = payload.root.children ?? [];
           const added = Array.from(
             { length: extra },
-            (_, index): Node =>
+            (_, index): A11yNode =>
               withoutText === true
                 ? { id: 9_000_000 + index, role: "paragraph" }
                 : { id: 9_000_000 + index, role: "paragraph", text: `Added paragraph ${index}` },
@@ -103,23 +89,19 @@ export async function standInForParts(page: Page, options: PartsOptions): Promis
           root = fields;
           const held = own.length + (firstMessage ?? perMessage);
           deliver({
-            ...data,
+            ...reply,
             payload: {
               ...payload,
               root: { ...root, child_count: all.length, children_start: 0, children: all.slice(0, held) },
             },
           });
         });
-      } else if (envelope?.type === "query.a11y" && envelope.payload?.node === undefined) {
-        wholeDocument = envelope.id;
-      } else if (
-        envelope?.type === "query.a11y" &&
-        envelope.payload?.children !== undefined &&
-        envelope.id !== undefined
-      ) {
+      } else if (query !== undefined && query.payload.node === undefined) {
+        wholeDocument = query.id;
+      } else if (query?.payload.children && query.id !== undefined) {
         // A part of the document node's children: the test answers, when released.
-        const { start, count } = envelope.payload.children;
-        const id = envelope.id;
+        const { start, count } = query.payload.children;
+        const id = query.id;
         queries.push({ start, count });
         if (released) answer(id, start, count);
         else waiting.push(() => answer(id, start, count));

@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import type { A11yChange, A11yNode, A11yUpdate, EngineEvent } from "../../src/engine/protocol.ts";
 import { partId, partQueries, releaseParts, standInForParts } from "./a11y-parts.ts";
 import { collectProblems } from "./collect-problems.ts";
 import { keepWorker, waitForDocument } from "./document.ts";
@@ -7,7 +8,8 @@ import { keepWorker, waitForDocument } from "./document.ts";
 // caret-sync prototype. Screen readers themselves are tested by hand (docs/spikes/WEB-002-report.md, "Screen-reader scripts"); these
 // tests check what the screen readers are given. Protocol v1 (WEB-004, engine protocol §14.7 item 1): the engine keeps its trees within
 // 64 levels and 200,000 nodes per message, the mirror treats a tree beyond them as a protocol violation, and it loads the parts of a
-// node's children that one message did not hold.
+// node's children that one message did not hold. The messages that the tests hand the app as the engine would send them are typed with
+// the protocol's types from the pinned engine package (src/engine/protocol.ts), so that the type check holds them to the protocol.
 
 const stopped = "The engine stopped. Reload the page to start it again.";
 
@@ -15,15 +17,9 @@ const stopped = "The engine stopped. Reload the page to start it again.";
 async function replaceWithChain(page: Page, nodeId: number, deepest: number): Promise<void> {
   await page.evaluate(
     ({ nodeId, deepest }) => {
-      interface Node {
-        id: number;
-        role: string;
-        text: string;
-        children?: Node[];
-      }
-      let node: Node | undefined;
+      let node: A11yNode | undefined;
       for (let level = deepest; level >= 2; level -= 1) {
-        const parent: Node = {
+        const parent: A11yNode = {
           id: level === 2 ? nodeId : 1_000_000 + level,
           role: "paragraph",
           text: `Level ${level}`,
@@ -31,11 +27,11 @@ async function replaceWithChain(page: Page, nodeId: number, deepest: number): Pr
         if (node !== undefined) parent.children = [node];
         node = parent;
       }
+      if (node === undefined) throw new Error("A chain starts on level 2.");
       const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
-      const update = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-      scope.__engineWorker.dispatchEvent(
-        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 1_000_000, payload: update } }),
-      );
+      const update: A11yUpdate = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq: 1_000_000, payload: update };
+      scope.__engineWorker.dispatchEvent(new MessageEvent("message", { data: message }));
     },
     { nodeId, deepest },
   );
@@ -306,11 +302,10 @@ test("a part that the engine refuses is not asked for again, also after updates,
   await page.evaluate((id) => {
     const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
     for (const seq of [3_000_000, 3_000_001, 3_000_002]) {
-      const node = { id, role: "paragraph", text: "This is the end of the mock document." };
-      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-      scope.__engineWorker.dispatchEvent(
-        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } }),
-      );
+      const node: A11yNode = { id, role: "paragraph", text: "This is the end of the mock document." };
+      const payload: A11yUpdate = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq, payload };
+      scope.__engineWorker.dispatchEvent(new MessageEvent("message", { data: message }));
     }
   }, last);
   await page.waitForTimeout(500);
@@ -365,11 +360,10 @@ test("a part of 199,999 children, as many as one message holds, is mirrored in f
       const queriesForThePart = scope.__partQueries.slice();
       // An update after the part, as typing brings, here replacing the mock document's last paragraph with itself. The mirror applies it
       // while its event is dispatched, and with all its node's children held it asks for no part again.
-      const node = { id: Number(last), role: "paragraph", text: "This is the end of the mock document." };
-      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-      scope.__engineWorker.dispatchEvent(
-        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 3_000_000, payload } }),
-      );
+      const node: A11yNode = { id: Number(last), role: "paragraph", text: "This is the end of the mock document." };
+      const payload: A11yUpdate = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq: 3_000_000, payload };
+      scope.__engineWorker.dispatchEvent(new MessageEvent("message", { data: message }));
       return {
         own: own.size,
         added,
@@ -415,15 +409,17 @@ test("an update that replaces a node holding 150,001 children forgets them all a
   const result = await page.evaluate((documentId) => {
     const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
     const replaceDocument = (seq: number, paragraphs: number, firstId: number) => {
-      const node = {
+      const node: A11yNode = {
         id: documentId,
         role: "document",
-        children: Array.from({ length: paragraphs }, (_, index) => ({ id: firstId + index, role: "paragraph" })),
+        children: Array.from(
+          { length: paragraphs },
+          (_, index): A11yNode => ({ id: firstId + index, role: "paragraph" }),
+        ),
       };
-      const payload = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-      scope.__engineWorker.dispatchEvent(
-        new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } }),
-      );
+      const payload: A11yUpdate = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+      const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq, payload };
+      scope.__engineWorker.dispatchEvent(new MessageEvent("message", { data: message }));
     };
     const held = (id: number) => document.querySelector(`[data-testid="a11y-mirror"] [data-node-id="${id}"]`) !== null;
     replaceDocument(3_000_001, 150_001, 5_000_000);
@@ -462,13 +458,7 @@ async function timeUpdates(
 ): Promise<number[][]> {
   return page.evaluate(
     ({ paragraph, kind, sizes, rounds }) => {
-      interface Node {
-        id: number;
-        role: string;
-        text?: string;
-        children?: Node[];
-      }
-      const chainDownTo = (deepest: Node, level: number): Node => {
+      const chainDownTo = (deepest: A11yNode, level: number): A11yNode => {
         let node = deepest;
         for (let above = level - 1; above >= 2; above -= 1) {
           node = { id: above === 2 ? paragraph : 3_000_000 + above, role: "paragraph", children: [node] };
@@ -477,10 +467,11 @@ async function timeUpdates(
       };
       const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
       let seq = 2_000_000;
-      const apply = (changes: { kind: string; node: Node }[]): number => {
+      const apply = (changes: A11yChange[]): number => {
         seq += 1;
-        const payload = { doc_id: scope.__docId, changes, caret: null };
-        const event = new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq, payload } });
+        const payload: A11yUpdate = { doc_id: scope.__docId, changes, caret: null };
+        const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq, payload };
+        const event = new MessageEvent("message", { data: message });
         const start = performance.now();
         scope.__engineWorker.dispatchEvent(event);
         return Math.round((performance.now() - start) * 10) / 10;
@@ -489,27 +480,30 @@ async function timeUpdates(
       for (let round = 1; round <= rounds; round += 1) {
         for (const [size, n] of sizes.entries()) {
           if (kind === "forget") {
-            const parent: Node = { id: 3_000_062, role: "paragraph", children: [] };
+            const parent: A11yNode = { id: 3_000_062, role: "paragraph", children: [] };
             for (let i = 0; i < n; i += 1) {
-              const below: Node = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i}` };
+              const below: A11yNode = { id: 5_000_000 + i, role: "paragraph", text: `Below ${i}` };
               parent.children?.push({ id: 4_000_000 + i, role: "paragraph", text: `Owner ${i}`, children: [below] });
             }
             apply([{ kind: "replace", node: chainDownTo(parent, 62) }]);
             // Without the tree in place, the timed update would have nothing to forget.
             if (document.querySelector(`[data-node-id="${5_000_000 + n - 1}"]`) === null)
               throw new Error("The tree to forget is not in place.");
-            const paragraphAgain: Node = { id: paragraph, role: "paragraph", text: `Replaced in round ${round}` };
+            const paragraphAgain: A11yNode = { id: paragraph, role: "paragraph", text: `Replaced in round ${round}` };
             times[size]?.push(apply([{ kind: "replace", node: paragraphAgain }]));
           } else {
-            const owner: Node = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
+            const owner: A11yNode = { id: 6_000_000, role: "paragraph", text: "Owner", children: [] };
             for (let i = 0; i < n; i += 1)
               owner.children?.push({ id: 7_000_000 + i, role: "paragraph", text: `Line ${i}` });
             apply([{ kind: "replace", node: chainDownTo(owner, 63) }]);
             const step = Math.floor(n / 400);
-            const changes = Array.from({ length: 400 }, (_, i) => ({
-              kind: "replace",
-              node: { id: 7_000_000 + i * step, role: "paragraph", text: `Changed ${i * step} in round ${round}` },
-            }));
+            const changes = Array.from(
+              { length: 400 },
+              (_, i): A11yChange => ({
+                kind: "replace",
+                node: { id: 7_000_000 + i * step, role: "paragraph", text: `Changed ${i * step} in round ${round}` },
+              }),
+            );
             times[size]?.push(apply(changes));
           }
         }

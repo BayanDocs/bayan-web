@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import type { A11yNode, EngineEvent } from "../../src/engine/protocol.ts";
 import { collectProblems } from "./collect-problems.ts";
 import { keepWorker, waitForDocument } from "./document.ts";
 import { rewriteHello, sentTypes } from "./engine-failures.ts";
@@ -95,46 +96,65 @@ test("after any other refusal of hello the app stops with the stop message, with
   expect(await problems()).toEqual([]);
 });
 
+/** A render.invalidate as the engine sends it, typed with the protocol's types from the pinned engine package (src/engine/protocol.ts). */
+const invalidate = (docId: number): EngineEvent<"render.invalidate"> => ({
+  v: 1,
+  type: "render.invalidate",
+  seq: 1_000_000,
+  payload: { doc_id: docId, revision: 1_000, regions: [] },
+});
+
+/** An overlay.update as the engine sends it. */
+const overlay = (docId: number): EngineEvent<"overlay.update"> => ({
+  v: 1,
+  type: "overlay.update",
+  seq: 1_000_000,
+  payload: { doc_id: docId, revision: 1_000, caret: null, selection: [], remote: [], highlights: [] },
+});
+
 /**
- * Messages from the engine that break the protocol (spec §14.1 item 5), each handed to the app as the engine's worker would send it. Large
- * parts are left out here and built in the page (`childrenBuiltInPage`): handing hundreds of thousands of objects from the test to the
- * page takes Playwright longer than a test may run on a slow machine, while the app itself refuses such a tree before it walks it.
+ * Messages from the engine that break the protocol (spec §14.1 item 5), each handed to the app as the engine's worker would send it. Each
+ * is built from a message that the protocol's types accept and then broken in the one way its name says, so that the type check holds the
+ * rest of it to the protocol and the app refuses it for that reason alone. Large parts are left out here and built in the page
+ * (`childrenBuiltInPage`): handing hundreds of thousands of objects from the test to the page takes Playwright longer than a test may run
+ * on a slow machine, while the app itself refuses such a tree before it walks it.
  */
 const violations: Record<string, (docId: number) => unknown> = {
-  "a message of protocol version 0": (docId) => ({
-    v: 0,
-    type: "render.invalidate",
-    seq: 1_000_000,
-    payload: { doc_id: docId, revision: 1_000, regions: [] },
-  }),
-  "an event without seq": (docId) => ({
-    v: 1,
-    type: "render.invalidate",
-    payload: { doc_id: docId, revision: 1_000, regions: [] },
-  }),
+  "a message of protocol version 0": (docId) => ({ ...invalidate(docId), v: 0 }),
+  "an event without seq": (docId) => {
+    const { seq: _, ...withoutSeq } = invalidate(docId);
+    return withoutSeq;
+  },
   "a message that is not an object": () => "render.invalidate",
-  "an overlay without its revision": (docId) => ({
-    v: 1,
-    type: "overlay.update",
-    seq: 1_000_000,
-    payload: { doc_id: docId, caret: null, selection: [], remote: [], highlights: [] },
-  }),
-  "an engine.error that does not say what follows": () => ({
-    v: 1,
-    type: "engine.error",
-    seq: 1_000_000,
-    payload: { code: "panic", message_id: "engine-error-panic", recoverable: false, args: {} },
-  }),
-  "an accessibility tree with a node of 200,001 children": (docId) => ({
-    v: 1,
-    type: "a11y.update",
-    seq: 1_000_000,
-    payload: {
-      doc_id: docId,
-      changes: [{ kind: "replace", node: { id: 1, role: "document", children: [] } }],
-      caret: null,
-    },
-  }),
+  "an overlay without its revision": (docId) => {
+    const message = overlay(docId);
+    const { revision: _, ...withoutRevision } = message.payload;
+    return { ...message, payload: withoutRevision };
+  },
+  // The types accept an engine.error without `restart`, because the engine recovers from some errors; §14.2 has the engine's binding add
+  // it to every error with `recoverable: false`, so this one, which leaves it out, breaks the protocol.
+  "an engine.error that does not say what follows": () => {
+    const error: EngineEvent<"engine.error"> = {
+      v: 1,
+      type: "engine.error",
+      seq: 1_000_000,
+      payload: { code: "panic", message_id: "engine-error-panic", recoverable: false, args: {} },
+    };
+    return error;
+  },
+  "an accessibility tree with a node of 200,001 children": (docId) => {
+    const update: EngineEvent<"a11y.update"> = {
+      v: 1,
+      type: "a11y.update",
+      seq: 1_000_000,
+      payload: {
+        doc_id: docId,
+        changes: [{ kind: "replace", node: { id: 1, role: "document", children: [] } }],
+        caret: null,
+      },
+    };
+    return update;
+  },
 };
 
 /** For these messages, the page gives the node of the first change this many paragraphs as its children before it hands them over. */
@@ -152,13 +172,12 @@ for (const [what, message] of Object.entries(violations)) {
     // Playwright hands the message to the page as the page's own objects, as a worker's message would arrive.
     await page.evaluate(
       ({ data, children }) => {
-        const change = (data as { payload?: { changes?: { node: { children: unknown[] } }[] } } | null)?.payload
-          ?.changes?.[0];
-        if (children > 0 && change !== undefined) {
-          change.node.children = Array.from({ length: children }, (_, index) => ({
-            id: 2_000_000 + index,
-            role: "paragraph",
-          }));
+        const change = children > 0 ? (data as EngineEvent<"a11y.update">).payload.changes[0] : undefined;
+        if (change !== undefined) {
+          change.node.children = Array.from(
+            { length: children },
+            (_, index): A11yNode => ({ id: 2_000_000 + index, role: "paragraph" }),
+          );
         }
         (globalThis as unknown as { __engineWorker: Worker }).__engineWorker.dispatchEvent(
           new MessageEvent("message", { data }),

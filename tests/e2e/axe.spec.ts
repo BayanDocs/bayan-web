@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import type { A11yNode, A11yUpdate, EngineEvent } from "../../src/engine/protocol.ts";
 import { partId, releaseParts, standInForParts } from "./a11y-parts.ts";
 import { collectProblems } from "./collect-problems.ts";
 import { keepWorker, waitForDocument } from "./document.ts";
@@ -198,18 +199,13 @@ for (const theme of ["light", "dark"] as const) {
       const id = Number(await mirror.getByText("This is the end of the mock document.").getAttribute("data-node-id"));
       expect(id).toBeGreaterThan(0);
       // As a11y.spec.ts does, an a11y.update that replaces the last paragraph (level 2, below the document) with a chain of nested nodes down
-      // to level 64, the deepest the engine sends: the mirror builds an element for every level.
+      // to level 64, the deepest the engine sends: the mirror builds an element for every level. The message is typed with the protocol's
+      // types from the pinned engine package (src/engine/protocol.ts), so that the type check holds it to the protocol.
       await page.evaluate(
         ({ nodeId, deepest }) => {
-          interface Node {
-            id: number;
-            role: string;
-            text: string;
-            children?: Node[];
-          }
-          let node: Node | undefined;
+          let node: A11yNode | undefined;
           for (let level = deepest; level >= 2; level -= 1) {
-            const parent: Node = {
+            const parent: A11yNode = {
               id: level === 2 ? nodeId : 1_000_000 + level,
               role: "paragraph",
               text: `Level ${level}`,
@@ -217,11 +213,11 @@ for (const theme of ["light", "dark"] as const) {
             if (node !== undefined) parent.children = [node];
             node = parent;
           }
+          if (node === undefined) throw new Error("A chain starts on level 2.");
           const scope = globalThis as unknown as { __engineWorker: Worker; __docId: number };
-          const update = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
-          scope.__engineWorker.dispatchEvent(
-            new MessageEvent("message", { data: { v: 1, type: "a11y.update", seq: 1_000_000, payload: update } }),
-          );
+          const update: A11yUpdate = { doc_id: scope.__docId, changes: [{ kind: "replace", node }], caret: null };
+          const message: EngineEvent<"a11y.update"> = { v: 1, type: "a11y.update", seq: 1_000_000, payload: update };
+          scope.__engineWorker.dispatchEvent(new MessageEvent("message", { data: message }));
         },
         { nodeId: id, deepest: 64 },
       );
