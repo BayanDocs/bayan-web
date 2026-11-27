@@ -75,7 +75,7 @@
 /tests/unit/size-report.test.ts @Gabrielc1925
 /tests/unit/engine-pin.test.ts @Gabrielc1925
 /tests/unit/engine-files.test.ts @Gabrielc1925
-# Of the app's security mechanisms and the engine boundary: security-headers.test.ts (the production headers' rules, and nginx's copy equal to them), trusted-types.test.ts (one policy, created in one module, and its rule), engine-checks.test.ts and engine-client.test.ts (every check of the worker's messages, and the end of the engine's use after a violation), platform.test.ts (also the worker host's init message with the module's hash), conformance.test.ts (every shell and web case of the pinned engine's conformance vectors, among them the restart and accessibility-limit cases, failing on any case or file it does not recognize) and a11y-tree.test.ts (the checks of accessibility trees).
+# Of the app's security mechanisms and the engine boundary: security-headers.test.ts (the production headers' rules, and nginx's copy equal to them), trusted-types.test.ts (one policy, created in one module, and its rule), engine-checks.test.ts and engine-client.test.ts (every check of the worker's messages, and the end of the engine's use after a violation), platform.test.ts (also the worker host's init message with the module's hash), conformance.test.ts (every shell and web case of the pinned engine's conformance vectors, among them the restart and accessibility-limit cases, failing on any case or file it does not recognize), a11y-tree.test.ts (the checks of accessibility trees) and tile-book.test.ts (among its cases, the refusal of a reply older than a revision the tile book had seen).
 /tests/unit/security-headers.test.ts @Gabrielc1925
 /tests/unit/trusted-types.test.ts @Gabrielc1925
 /tests/unit/engine-checks.test.ts @Gabrielc1925
@@ -83,6 +83,7 @@
 /tests/unit/platform.test.ts @Gabrielc1925
 /tests/unit/conformance.test.ts @Gabrielc1925
 /tests/unit/a11y-tree.test.ts @Gabrielc1925
+/tests/unit/tile-book.test.ts @Gabrielc1925
 # Of the Ubuntu packages: that the lock is well formed, that the Ubuntu job runs in the lock's base image, that no workflow runs apt or names a snapshot date, and that APT_PACKAGES and APT_SNAPSHOT of dev-setup.sh match the lock (ubuntu-packages-lock.test.ts); and that ubuntu-packages.sh checks every file it fetches, refuses what it must and installs exactly what the lock lists (ubuntu-packages-script.test.ts).
 /tests/unit/ubuntu-packages-lock.test.ts @Gabrielc1925
 /tests/unit/ubuntu-packages-script.test.ts @Gabrielc1925
